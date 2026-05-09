@@ -10,6 +10,10 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 
 APP_DIR = Path(__file__).parent
 DATA_DIR = APP_DIR / "data"
@@ -204,6 +208,38 @@ def pdf_header_footer(canvas, doc, title=""):
 
 
 
+
+ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"]
+TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+
+def number_to_words(n):
+    n = int(n)
+    if n == 0:
+        return "Zero"
+    if n < 20:
+        return ONES[n]
+    if n < 100:
+        return TENS[n // 10] + ((" " + ONES[n % 10]) if n % 10 else "")
+    if n < 1000:
+        return ONES[n // 100] + " Hundred" + ((" " + number_to_words(n % 100)) if n % 100 else "")
+    if n < 1000000:
+        return number_to_words(n // 1000) + " Thousand" + ((" " + number_to_words(n % 1000)) if n % 1000 else "")
+    if n < 1000000000:
+        return number_to_words(n // 1000000) + " Million" + ((" " + number_to_words(n % 1000000)) if n % 1000000 else "")
+    return number_to_words(n // 1000000000) + " Billion" + ((" " + number_to_words(n % 1000000000)) if n % 1000000000 else "")
+
+def amount_in_words(amount, currency):
+    amount = round(float(amount or 0), 2)
+    whole = int(amount)
+    cents = int(round((amount - whole) * 100))
+    currency_name = {"EUR": "Euros", "USD": "US Dollars", "AED": "UAE Dirhams"}.get(currency, currency)
+    minor_name = {"EUR": "Cents", "USD": "Cents", "AED": "Fils"}.get(currency, "Cents")
+    words = f"{number_to_words(whole)} {currency_name}"
+    if cents:
+        words += f" and {number_to_words(cents)} {minor_name}"
+    return words + " Only"
+
+
 def build_excel(docdata):
     buffer = BytesIO()
     products = docdata.get("products", [])
@@ -281,6 +317,153 @@ def build_excel(docdata):
     return buffer.getvalue()
 
 
+
+def build_word(docdata):
+    buffer = BytesIO()
+    products = docdata.get("products", [])
+    packing = packing_from_products(products, docdata.get("packing", []))
+    subtotal, disc, shipc, total = calculate(
+        products,
+        docdata.get("discount_type", "Percentage"),
+        docdata.get("discount_value", 0),
+        docdata.get("shipping_enabled", False),
+        docdata.get("shipping_cost", 0),
+    )
+
+    document = Document()
+    section = document.sections[0]
+    section.top_margin = Inches(0.45)
+    section.bottom_margin = Inches(0.45)
+    section.left_margin = Inches(0.45)
+    section.right_margin = Inches(0.45)
+
+    if LOGO_PATH.exists():
+        p = document.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run()
+        run.add_picture(str(LOGO_PATH), width=Inches(1.8))
+
+    title = document.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = title.add_run(docdata.get("type", "").upper())
+    r.bold = True
+    r.font.size = Pt(16)
+
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.add_run(f"No: {docdata.get('number','')} | Date: {docdata.get('date','')} | Currency: {docdata.get('currency','')}").bold = True
+
+    document.add_paragraph(f"{COMPANY['name']}\n{COMPANY['address']}\n{COMPANY['license']}\n{COMPANY['phone']}\n{COMPANY['email']}")
+
+    bill = docdata.get("bill_to", {})
+    ship = docdata.get("ship_to", {})
+    table = document.add_table(rows=1, cols=2)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = "Table Grid"
+    table.cell(0,0).text = "BILL TO\n" + "\n".join([
+        bill.get("Company Name",""), bill.get("Registration Number",""), bill.get("GST/VAT",""),
+        bill.get("Contact Person",""), bill.get("Phone",""), bill.get("Email",""),
+        bill.get("Address",""), bill.get("Country","")
+    ])
+    table.cell(0,1).text = "SHIP TO\n" + ("Same as Bill To" if docdata.get("ship_same") else "\n".join([
+        ship.get("Company Name",""), ship.get("Contact Person",""), ship.get("Phone",""),
+        ship.get("Email",""), ship.get("Address",""), ship.get("Country","")
+    ]))
+
+    document.add_paragraph("")
+    prod_table = document.add_table(rows=1, cols=8)
+    prod_table.style = "Table Grid"
+    headers = ["SL", "Brand", "Product Details", "Size", "Finish", "Qty", "Rate/PC", "Amount"]
+    for i, h in enumerate(headers):
+        prod_table.rows[0].cells[i].text = h
+    for idx, p in enumerate(products, 1):
+        qty = float(p.get("Qty", 0) or 0)
+        rate = float(p.get("Rate Per Piece", 0) or 0)
+        row = prod_table.add_row().cells
+        vals = [idx, p.get("Brand",""), p.get("Product Details",""), p.get("Size",""), p.get("Finish",""), qty, money(rate, docdata.get("currency","EUR")), money(qty*rate, docdata.get("currency","EUR"))]
+        for i, v in enumerate(vals):
+            row[i].text = str(v)
+
+    document.add_paragraph("")
+    totals_table = document.add_table(rows=4, cols=2)
+    totals_table.style = "Table Grid"
+    rows = [
+        ("Subtotal", money(subtotal, docdata.get("currency","EUR"))),
+        ("Discount", f"- {money(disc, docdata.get('currency','EUR'))}"),
+        ("Shipping", money(shipc, docdata.get("currency","EUR"))),
+        ("Grand Total", money(total, docdata.get("currency","EUR"))),
+    ]
+    for i, (label, val) in enumerate(rows):
+        totals_table.cell(i,0).text = label
+        totals_table.cell(i,1).text = val
+
+    p = document.add_paragraph()
+    r = p.add_run("Amount in Words: ")
+    r.bold = True
+    p.add_run(amount_in_words(total, docdata.get("currency","EUR")))
+
+    document.add_paragraph("")
+    document.add_heading("Bank Details", level=2)
+    bank_table = document.add_table(rows=1, cols=5)
+    bank_table.style = "Table Grid"
+    for i, h in enumerate(["Bank Name", "Currency", "IBAN", "SWIFT/BIC", "Bank Address"]):
+        bank_table.rows[0].cells[i].text = h
+    for b in BANKS.get(docdata.get("currency","EUR"), []):
+        row = bank_table.add_row().cells
+        for i, h in enumerate(["Bank Name", "Currency", "IBAN", "SWIFT/BIC", "Bank Address"]):
+            row[i].text = b.get(h, "")
+
+    document.add_page_break()
+    if LOGO_PATH.exists():
+        p = document.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run().add_picture(str(LOGO_PATH), width=Inches(1.5))
+    document.add_heading("Terms & Conditions", level=1)
+    document.add_paragraph(docdata.get("terms", ""))
+
+    document.add_paragraph("")
+    sig = document.add_table(rows=2, cols=2)
+    sig.style = "Table Grid"
+    sig.cell(0,0).text = "Seller Signature"
+    sig.cell(0,1).text = "Buyer Signature"
+    sig.cell(1,0).text = "HARSH TEJPAL RANA\nOWNER\nCASA ARTE PRIVEE FZ-LLC"
+    sig.cell(1,1).text = "Name:\nCompany:\nDate:"
+    if STAMP_PATH.exists():
+        p = document.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p.add_run().add_picture(str(STAMP_PATH), width=Inches(1.0))
+
+    if docdata.get("type") == "Invoice":
+        document.add_page_break()
+        if LOGO_PATH.exists():
+            p = document.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run().add_picture(str(LOGO_PATH), width=Inches(1.5))
+        document.add_heading("Packing List", level=1)
+        pack_table = document.add_table(rows=1, cols=10)
+        pack_table.style = "Table Grid"
+        for i, h in enumerate(["SL", "Box No", "Part", "Brand", "Product Details", "L", "B", "H", "CBM", "GW/NW"]):
+            pack_table.rows[0].cells[i].text = h
+        for i, p in enumerate(packing, 1):
+            row = pack_table.add_row().cells
+            vals = [i, p.get("Box No", i), p.get("Part",""), p.get("Brand",""), p.get("Product Details",""), p.get("Length",0), p.get("Breadth",0), p.get("Height",0), p.get("CBM",0), f"{p.get('GW',0)} / {p.get('NW',0)}"]
+            for j, v in enumerate(vals):
+                row[j].text = str(v)
+        document.add_paragraph(
+            f"Total Boxes: {len(packing)} | Total CBM: {sum(float(x.get('CBM',0) or 0) for x in packing):.3f} | "
+            f"Total GW: {sum(float(x.get('GW',0) or 0) for x in packing):.2f} KG | "
+            f"Total NW: {sum(float(x.get('NW',0) or 0) for x in packing):.2f} KG"
+        )
+        if STAMP_PATH.exists():
+            p = document.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            p.add_run().add_picture(str(STAMP_PATH), width=Inches(1.0))
+
+    document.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def build_pdf(docdata):
     buffer = BytesIO()
     pdf = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=32*mm, bottomMargin=15*mm)
@@ -316,7 +499,9 @@ def build_pdf(docdata):
     totals = [["Subtotal", money(subtotal, docdata["currency"])],["Discount", f"- {money(disc, docdata['currency'])}"],["Shipping", money(shipc, docdata["currency"])],["Grand Total", money(total, docdata["currency"])]]
     tt = Table(totals, colWidths=[40*mm,38*mm], hAlign="RIGHT")
     tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.25,colors.grey),("BACKGROUND",(0,3),(-1,3),colors.HexColor("#071c2e")),("TEXTCOLOR",(0,3),(-1,3),colors.white),("FONTNAME",(0,3),(-1,3),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8)]))
-    story.append(tt); story.append(Spacer(1,7))
+    story.append(tt); story.append(Spacer(1,5))
+    story.append(Paragraph(f"<b>Amount in Words:</b> {amount_in_words(total, docdata['currency'])}", styles["Navy"]))
+    story.append(Spacer(1,7))
 
     story.append(Paragraph("BANK DETAILS", styles["Navy"]))
     bank_rows = [["Bank Name","Currency","IBAN","SWIFT/BIC","Bank Address"]]
@@ -498,6 +683,7 @@ if st.session_state.page == "Create / Edit":
     m2.metric("Discount", money(discount_amount, currency))
     m3.metric("Shipping", money(shipping_amount, currency))
     m4.metric("Grand Total", money(grand, currency))
+    st.info(f"Amount in Words: {amount_in_words(grand, currency)}")
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><h3 class='gold'>Bank Details</h3>", unsafe_allow_html=True)
@@ -636,7 +822,7 @@ if st.session_state.page == "Create / Edit":
             st.info("Already an Invoice.")
 
     x3.download_button("Download PDF", data=build_pdf(docdata), file_name=f"{doc_number.replace('/','-')}.pdf", mime="application/pdf")
-    st.download_button("Download Excel", data=build_excel(docdata), file_name=f"{doc_number.replace('/','-')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("Download Word", data=build_word(docdata), file_name=f"{doc_number.replace('/','-')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 if st.session_state.page == "Saved Documents":
     st.markdown("<div class='card'><h3 class='gold'>Saved Documents — Select / Edit / Convert / Delete</h3>", unsafe_allow_html=True)
@@ -692,11 +878,11 @@ if st.session_state.page == "Saved Documents":
                     key=f"pdf_{d.get('id')}"
                 )
                 d1.download_button(
-                    "Download Excel",
-                    data=build_excel(d),
-                    file_name=f"{d.get('number','document').replace('/','-')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"xlsx_{d.get('id')}"
+                    "Download Word",
+                    data=build_word(d),
+                    file_name=f"{d.get('number','document').replace('/','-')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"docx_{d.get('id')}"
                 )
 
                 confirm = d2.checkbox(f"Confirm delete {d.get('number','')}", key=f"confirm_delete_{d.get('id')}")

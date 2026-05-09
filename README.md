@@ -1,13 +1,10 @@
-# Casa Arte Privée Billing System — Final Boxes + Excel
+# Casa Arte Privée Billing System — Word + Amount in Words
 
-## Latest additions
-- Packing List supports multiple boxes/parts per item.
-- Add/Split Box button for items with 2+ boxes.
-- Packing List has Box No and Part columns.
-- Total Boxes shown in summary and PDF.
-- Excel download added for PI/Invoice.
-- Excel includes document info, invoice, totals, bank details, terms, and packing list.
-- Navigation button font reduced.
+## Last change only
+- Added Amount in Words to invoice/proforma totals.
+- PDF includes Amount in Words.
+- Replaced Excel download with Word (.docx) download.
+- No other workflow changes.
 
 ## Login
 Password: 1985
