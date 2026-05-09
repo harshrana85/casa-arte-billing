@@ -95,6 +95,29 @@ def calculate(products, discount_type, discount_value, shipping_enabled, shippin
     shipping = float(shipping_cost or 0) if shipping_enabled else 0.0
     return subtotal, discount, shipping, subtotal - discount + shipping
 
+
+def is_real_packing_row(row):
+    return bool(str(row.get("Brand", "")).strip()) or bool(str(row.get("Product Details", "")).strip())
+
+def clean_packing_rows(rows):
+    cleaned = []
+    for row in rows or []:
+        if not is_real_packing_row(row):
+            continue
+        cleaned.append(row)
+    for idx, row in enumerate(cleaned, 1):
+        row["Box No"] = idx
+    return cleaned
+
+def packing_summary(rows):
+    real_rows = clean_packing_rows(rows)
+    return {
+        "Total Boxes": len(real_rows),
+        "Total CBM": round(sum(float(x.get("CBM", 0) or 0) for x in real_rows), 3),
+        "Total GW": round(sum(float(x.get("GW", 0) or 0) for x in real_rows), 2),
+        "Total NW": round(sum(float(x.get("NW", 0) or 0) for x in real_rows), 2),
+    }
+
 def packing_from_products(products, existing=None):
     existing = existing or []
     out = []
@@ -135,10 +158,7 @@ def packing_from_products(products, existing=None):
                 "NW": 0.0,
             })
 
-    # Renumber boxes continuously.
-    for idx, row in enumerate(out, 1):
-        row["Box No"] = idx
-    return out
+    return clean_packing_rows(out)
 
 
 def pdf_header_footer(canvas, doc, title=""):
@@ -449,10 +469,12 @@ def build_word(docdata):
             vals = [i, p.get("Box No", i), p.get("Part",""), p.get("Brand",""), p.get("Product Details",""), p.get("Length",0), p.get("Breadth",0), p.get("Height",0), p.get("CBM",0), f"{p.get('GW',0)} / {p.get('NW',0)}"]
             for j, v in enumerate(vals):
                 row[j].text = str(v)
+        summary = docdata.get("packing_summary") or packing_summary(packing)
         document.add_paragraph(
-            f"Total Boxes: {len(packing)} | Total CBM: {sum(float(x.get('CBM',0) or 0) for x in packing):.3f} | "
-            f"Total GW: {sum(float(x.get('GW',0) or 0) for x in packing):.2f} KG | "
-            f"Total NW: {sum(float(x.get('NW',0) or 0) for x in packing):.2f} KG"
+            f"Total Boxes: {int(summary.get('Total Boxes', len(packing)))} | "
+            f"Total CBM: {float(summary.get('Total CBM', 0)):.3f} | "
+            f"Total GW: {float(summary.get('Total GW', 0)):.2f} KG | "
+            f"Total NW: {float(summary.get('Total NW', 0)):.2f} KG"
         )
         if STAMP_PATH.exists():
             p = document.add_paragraph()
@@ -537,7 +559,8 @@ def build_pdf(docdata):
         pt = Table(prow, repeatRows=1, colWidths=[7*mm,13*mm,13*mm,24*mm,45*mm,13*mm,13*mm,13*mm,16*mm,16*mm,16*mm])
         pt.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#071c2e")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.25,colors.lightgrey),("FONTSIZE",(0,0),(-1,-1),6.8),("VALIGN",(0,0),(-1,-1),"TOP")]))
         story.append(pt); story.append(Spacer(1,8))
-        story.append(Paragraph(f"<b>Total Boxes:</b> {len(pack)} &nbsp;&nbsp; <b>Total CBM:</b> {sum(float(x.get('CBM',0) or 0) for x in pack):.3f} &nbsp;&nbsp; <b>Total GW:</b> {sum(float(x.get('GW',0) or 0) for x in pack):.2f} KG &nbsp;&nbsp; <b>Total NW:</b> {sum(float(x.get('NW',0) or 0) for x in pack):.2f} KG", styles["Navy"]))
+        summary = docdata.get("packing_summary") or packing_summary(pack)
+        story.append(Paragraph(f"<b>Total Boxes:</b> {int(summary.get('Total Boxes', len(pack)))} &nbsp;&nbsp; <b>Total CBM:</b> {float(summary.get('Total CBM', 0)):.3f} &nbsp;&nbsp; <b>Total GW:</b> {float(summary.get('Total GW', 0)):.2f} KG &nbsp;&nbsp; <b>Total NW:</b> {float(summary.get('Total NW', 0)):.2f} KG", styles["Navy"]))
         story.append(Spacer(1,15))
         story.append(Paragraph("Digital Signature / Authorized Signatory", styles["Navy"]))
         if STAMP_PATH.exists():
@@ -695,29 +718,31 @@ if st.session_state.page == "Create / Edit":
     st.markdown("</div>", unsafe_allow_html=True)
 
     packing = []
+    packing_summary_values = {"Total Boxes": 0, "Total CBM": 0.0, "Total GW": 0.0, "Total NW": 0.0}
+    packing_manual_override = False
+
     if doc_type == "Invoice":
         st.markdown("<div class='card'><h3 class='gold'>Packing List — Mandatory</h3>", unsafe_allow_html=True)
 
-        # Persistent packing list state.
-        # This prevents split boxes/parts from disappearing on Streamlit rerun.
         current_doc_key = editing.get("id") if editing else "new_document"
         packing_state_key = f"packing_rows_{current_doc_key}"
 
-        # If user opened a different document, load that document's saved packing rows once.
         if st.session_state.get("active_packing_doc_key") != current_doc_key:
             saved_packing = editing.get("packing", []) if editing else []
-            st.session_state[packing_state_key] = packing_from_products(products, saved_packing)
+            st.session_state[packing_state_key] = clean_packing_rows(packing_from_products(products, saved_packing))
             st.session_state["active_packing_doc_key"] = current_doc_key
 
-        # If packing was never initialized, initialize from current products.
         if packing_state_key not in st.session_state:
             saved_packing = editing.get("packing", []) if editing else []
-            st.session_state[packing_state_key] = packing_from_products(products, saved_packing)
+            st.session_state[packing_state_key] = clean_packing_rows(packing_from_products(products, saved_packing))
 
-        # Make sure new invoice products get a packing row, but do NOT delete existing split rows.
-        existing_rows = st.session_state[packing_state_key]
+        existing_rows = clean_packing_rows(st.session_state[packing_state_key])
         existing_pairs = {(r.get("Brand", ""), r.get("Product Details", "")) for r in existing_rows}
+
+        # Add one default packing row only for each actual invoice product.
         for p in products:
+            if not str(p.get("Brand", "")).strip() and not str(p.get("Product Details", "")).strip():
+                continue
             pair = (p.get("Brand", ""), p.get("Product Details", ""))
             if pair not in existing_pairs:
                 existing_rows.append({
@@ -734,9 +759,16 @@ if st.session_state.page == "Create / Edit":
                 })
                 existing_pairs.add(pair)
 
-        st.caption("Use Add/Split Box when an item has 2 or more boxes/parts. Each row counts as one box and will save permanently.")
+        st.session_state[packing_state_key] = clean_packing_rows(existing_rows)
 
-        product_labels = [f"{i+1}. {p.get('Brand','')} - {p.get('Product Details','')}" for i, p in enumerate(products)]
+        st.caption("Use Add/Split Box when an item has 2 or more boxes/parts. Blank rows are ignored and not counted.")
+
+        product_labels = [
+            f"{i+1}. {p.get('Brand','')} - {p.get('Product Details','')}"
+            for i, p in enumerate(products)
+            if str(p.get("Brand", "")).strip() or str(p.get("Product Details", "")).strip()
+        ]
+
         split_cols = st.columns([3, 1, 1])
         with split_cols[0]:
             split_choice = st.selectbox("Select item to add another box/part", product_labels if product_labels else ["No products"])
@@ -746,11 +778,11 @@ if st.session_state.page == "Create / Edit":
             st.write("")
             st.write("")
             if st.button("Add/Split Box"):
-                if products:
-                    idx = product_labels.index(split_choice)
-                    p = products[idx]
+                if product_labels:
+                    original_index = int(split_choice.split(".")[0]) - 1
+                    p = products[original_index]
                     st.session_state[packing_state_key].append({
-                        "Box No": len(st.session_state[packing_state_key]) + 1,
+                        "Box No": len(clean_packing_rows(st.session_state[packing_state_key])) + 1,
                         "Part": part_label or "Part",
                         "Brand": p.get("Brand", ""),
                         "Product Details": p.get("Product Details", ""),
@@ -761,9 +793,10 @@ if st.session_state.page == "Create / Edit":
                         "GW": 0.0,
                         "NW": 0.0,
                     })
+                    st.session_state[packing_state_key] = clean_packing_rows(st.session_state[packing_state_key])
                     st.rerun()
 
-        pack_init = pd.DataFrame(st.session_state[packing_state_key])
+        pack_init = pd.DataFrame(clean_packing_rows(st.session_state[packing_state_key]))
         for col in PACK_COLS:
             if col not in pack_init.columns:
                 pack_init[col] = 0 if col in ["Box No","Length","Breadth","Height","CBM","GW","NW"] else ""
@@ -775,9 +808,11 @@ if st.session_state.page == "Create / Edit":
             key=f"pack_editor_{current_doc_key}"
         )
 
-        packing = pack_edit.fillna(0).to_dict("records")
-        for i, row in enumerate(packing, 1):
-            row["Box No"] = int(row.get("Box No", i) or i)
+        packing = pack_edit.fillna("").to_dict("records")
+        real_packing = []
+        for row in packing:
+            if not is_real_packing_row(row):
+                continue
             row["CBM"] = round(
                 float(row.get("Length", 0) or 0)
                 * float(row.get("Breadth", 0) or 0)
@@ -785,16 +820,42 @@ if st.session_state.page == "Create / Edit":
                 / 1000000,
                 3
             )
+            row["GW"] = float(row.get("GW", 0) or 0)
+            row["NW"] = float(row.get("NW", 0) or 0)
+            real_packing.append(row)
 
-        # Save edited packing rows back into session immediately.
+        packing = clean_packing_rows(real_packing)
         st.session_state[packing_state_key] = packing
 
-        st.write(
-            f"**Total Boxes:** {len(packing)} | "
-            f"**Total CBM:** {sum(float(x.get('CBM',0) or 0) for x in packing):.3f} | "
-            f"**Total GW:** {sum(float(x.get('GW',0) or 0) for x in packing):.2f} KG | "
-            f"**Total NW:** {sum(float(x.get('NW',0) or 0) for x in packing):.2f} KG"
-        )
+        auto_summary = packing_summary(packing)
+
+        st.markdown("**Packing Summary**")
+        packing_manual_override = st.checkbox("Manual override summary totals", value=False)
+        sc1, sc2, sc3, sc4 = st.columns(4)
+
+        if packing_manual_override:
+            total_boxes = sc1.number_input("Total Boxes", min_value=0, value=int(auto_summary["Total Boxes"]))
+            total_cbm = sc2.number_input("Total CBM", min_value=0.0, value=float(auto_summary["Total CBM"]), format="%.3f")
+            total_gw = sc3.number_input("Total GW", min_value=0.0, value=float(auto_summary["Total GW"]), format="%.2f")
+            total_nw = sc4.number_input("Total NW", min_value=0.0, value=float(auto_summary["Total NW"]), format="%.2f")
+        else:
+            total_boxes = auto_summary["Total Boxes"]
+            total_cbm = auto_summary["Total CBM"]
+            total_gw = auto_summary["Total GW"]
+            total_nw = auto_summary["Total NW"]
+            sc1.metric("Total Boxes", total_boxes)
+            sc2.metric("Total CBM", f"{total_cbm:.3f}")
+            sc3.metric("Total GW", f"{total_gw:.2f} KG")
+            sc4.metric("Total NW", f"{total_nw:.2f} KG")
+
+        packing_summary_values = {
+            "Total Boxes": int(total_boxes),
+            "Total CBM": float(total_cbm),
+            "Total GW": float(total_gw),
+            "Total NW": float(total_nw),
+            "Manual Override": bool(packing_manual_override),
+        }
+
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.warning("Proforma: packing list is hidden. It will auto-create when converted to Invoice.")
@@ -806,7 +867,7 @@ if st.session_state.page == "Create / Edit":
         "bill_to": bill_to, "ship_same": ship_same, "ship_to": ship_to,
         "products": products, "discount_type": discount_type, "discount_value": discount_value,
         "shipping_enabled": shipping_enabled, "shipping_cost": shipping_cost,
-        "terms": terms, "packing": packing, "total": grand,
+        "terms": terms, "packing": packing, "packing_summary": packing_summary_values, "total": grand,
         "created_at": editing.get("created_at") if editing else datetime.now().isoformat(timespec="seconds"),
         "updated_at": datetime.now().isoformat(timespec="seconds")
     }

@@ -1,11 +1,12 @@
-# Casa Arte Privée Billing System — Packing Split Persistence Fixed
+# Casa Arte Privée Billing System — PL Summary Override Fixed
 
-## Fix in this version
-- Split packing-list boxes/parts no longer disappear after rerun.
-- Add/Split Box rows are stored in session immediately.
-- Save/Update writes split boxes permanently into documents.json.
-- Reopening the same invoice reloads saved split boxes.
-- PDF and Word use saved split rows.
+## Fixes
+- Blank/empty packing rows are ignored and not counted.
+- Unnecessary blank row in PDF/Word removed.
+- Split item into 2 boxes now counts correctly.
+- Live packing summary updates on entry page.
+- Manual override added for Total Boxes, Total CBM, Total GW, Total NW.
+- PDF and Word use manual override if enabled.
 
 ## Login
 Password: 1985
