@@ -112,45 +112,46 @@ def packing_from_products(products, existing=None):
         })
     return out
 
+
 def pdf_header_footer(canvas, doc, title=""):
     w, h = A4
     canvas.saveState()
 
-    # Logo on every page - top left
+    # Logo
     if LOGO_PATH.exists():
         canvas.drawImage(
             str(LOGO_PATH),
-            12*mm,
-            h-24*mm,
-            width=35*mm,
-            height=16*mm,
+            12 * mm,
+            h - 24 * mm,
+            width=35 * mm,
+            height=16 * mm,
             preserveAspectRatio=True,
             mask="auto"
         )
 
-    # Company header on every page - top right
+    # Header text
     canvas.setFillColor(colors.HexColor("#071c2e"))
     canvas.setFont("Helvetica-Bold", 11)
-    canvas.drawRightString(w-12*mm, h-15*mm, COMPANY["name"])
+    canvas.drawRightString(w - 12 * mm, h - 15 * mm, COMPANY["name"])
 
     canvas.setFillColor(colors.HexColor("#9b763c"))
     canvas.setFont("Helvetica-Bold", 9)
-    canvas.drawRightString(w-12*mm, h-20*mm, title)
+    canvas.drawRightString(w - 12 * mm, h - 20 * mm, title)
 
     canvas.setStrokeColor(colors.HexColor("#d0aa65"))
-    canvas.line(12*mm, h-27*mm, w-12*mm, h-27*mm)
+    canvas.line(12 * mm, h - 27 * mm, w - 12 * mm, h - 27 * mm)
 
-    # Stamp on every page - darker and at bottom-right, above footer
+    # Stamp bottom right
     if STAMP_PATH.exists():
         try:
             canvas.saveState()
             canvas.setFillAlpha(0.55)
             canvas.drawImage(
                 str(STAMP_PATH),
-                w-48*mm,
-                15*mm,
-                width=32*mm,
-                height=32*mm,
+                w - 48 * mm,
+                15 * mm,
+                width=32 * mm,
+                height=32 * mm,
                 preserveAspectRatio=True,
                 mask="auto"
             )
@@ -158,44 +159,25 @@ def pdf_header_footer(canvas, doc, title=""):
         except Exception:
             canvas.drawImage(
                 str(STAMP_PATH),
-                w-48*mm,
-                15*mm,
-                width=32*mm,
-                height=32*mm,
+                w - 48 * mm,
+                15 * mm,
+                width=32 * mm,
+                height=32 * mm,
                 preserveAspectRatio=True,
                 mask="auto"
             )
 
+    # Footer
     canvas.setFillColor(colors.grey)
     canvas.setFont("Helvetica", 7)
     canvas.drawCentredString(
-        w/2,
-        8*mm,
+        w / 2,
+        8 * mm,
         f"{COMPANY['name']} | {COMPANY['email']} | Page {canvas.getPageNumber()}"
     )
-    canvas.restoreState()
-        except Exception:
-            canvas.drawImage(
-                str(STAMP_PATH),
-                w-54*mm,
-                h-58*mm,
-                width=34*mm,
-                height=34*mm,
-                preserveAspectRatio=True,
-                mask="auto"
-            )
 
-    canvas.setStrokeColor(colors.HexColor("#d0aa65"))
-    canvas.line(12*mm, h-27*mm, w-12*mm, h-27*mm)
-
-    canvas.setFillColor(colors.grey)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawCentredString(
-        w/2,
-        8*mm,
-        f"{COMPANY['name']} | {COMPANY['email']} | Page {canvas.getPageNumber()}"
-    )
     canvas.restoreState()
+
 
 def build_pdf(docdata):
     buffer = BytesIO()
