@@ -1,12 +1,13 @@
-# Casa Arte Privée Billing System — Smooth Navigation Final
+# Casa Arte Privée Billing System — Final Boxes + Excel
 
-## What changed
-- Removed wide sidebar completely.
-- Added slim top navigation buttons.
-- Edit opens entry page immediately.
-- Convert opens converted invoice immediately.
-- Save Update returns to Saved Documents.
-- Edited documents update same record, not duplicate.
+## Latest additions
+- Packing List supports multiple boxes/parts per item.
+- Add/Split Box button for items with 2+ boxes.
+- Packing List has Box No and Part columns.
+- Total Boxes shown in summary and PDF.
+- Excel download added for PI/Invoice.
+- Excel includes document info, invoice, totals, bank details, terms, and packing list.
+- Navigation button font reduced.
 
 ## Login
 Password: 1985
@@ -16,5 +17,5 @@ pip install -r requirements.txt
 streamlit run app.py
 
 ## Streamlit Cloud
-Upload/replace all files in GitHub, then reboot app.
+Upload all files to GitHub and reboot.
 Main file: app.py

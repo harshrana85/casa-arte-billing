@@ -46,7 +46,7 @@ BANKS = {
 }
 
 PRODUCT_COLS = ["Brand","Product Details","Size","Finish","Qty","Rate Per Piece"]
-PACK_COLS = ["Brand","Product Details","Length","Breadth","Height","CBM","GW","NW"]
+PACK_COLS = ["Box No","Part","Brand","Product Details","Length","Breadth","Height","CBM","GW","NW"]
 
 def load_json(path, default):
     if not path.exists():
@@ -94,22 +94,46 @@ def calculate(products, discount_type, discount_value, shipping_enabled, shippin
 def packing_from_products(products, existing=None):
     existing = existing or []
     out = []
-    for i,p in enumerate(products):
-        ex = existing[i] if i < len(existing) else {}
-        l = float(ex.get("Length",0) or 0)
-        b = float(ex.get("Breadth",0) or 0)
-        h = float(ex.get("Height",0) or 0)
-        q = float(p.get("Qty",1) or 1)
-        out.append({
-            "Brand": p.get("Brand",""),
-            "Product Details": p.get("Product Details",""),
-            "Length": l,
-            "Breadth": b,
-            "Height": h,
-            "CBM": round(l*b*h*q/1000000, 3),
-            "GW": float(ex.get("GW",0) or 0),
-            "NW": float(ex.get("NW",0) or 0),
-        })
+
+    # Existing packing rows are preserved so split boxes/parts are not lost on edit.
+    for i, p in enumerate(products):
+        matching = [
+            row for row in existing
+            if row.get("Product Details", "") == p.get("Product Details", "")
+            and row.get("Brand", "") == p.get("Brand", "")
+        ]
+
+        if matching:
+            for row in matching:
+                l = float(row.get("Length", 0) or 0)
+                b = float(row.get("Breadth", 0) or 0)
+                h = float(row.get("Height", 0) or 0)
+                box_qty = float(row.get("Box Qty", 1) or 1)
+                row["Box No"] = int(row.get("Box No", len(out) + 1) or len(out) + 1)
+                row["Part"] = row.get("Part", "1/1")
+                row["Brand"] = p.get("Brand", "")
+                row["Product Details"] = p.get("Product Details", "")
+                row["CBM"] = round(l * b * h * box_qty / 1000000, 3)
+                row["GW"] = float(row.get("GW", 0) or 0)
+                row["NW"] = float(row.get("NW", 0) or 0)
+                out.append(row)
+        else:
+            out.append({
+                "Box No": len(out) + 1,
+                "Part": "1/1",
+                "Brand": p.get("Brand", ""),
+                "Product Details": p.get("Product Details", ""),
+                "Length": 0.0,
+                "Breadth": 0.0,
+                "Height": 0.0,
+                "CBM": 0.0,
+                "GW": 0.0,
+                "NW": 0.0,
+            })
+
+    # Renumber boxes continuously.
+    for idx, row in enumerate(out, 1):
+        row["Box No"] = idx
     return out
 
 
@@ -179,6 +203,84 @@ def pdf_header_footer(canvas, doc, title=""):
     canvas.restoreState()
 
 
+
+def build_excel(docdata):
+    buffer = BytesIO()
+    products = docdata.get("products", [])
+    packing = packing_from_products(products, docdata.get("packing", []))
+    subtotal, disc, shipc, total = calculate(
+        products,
+        docdata.get("discount_type", "Percentage"),
+        docdata.get("discount_value", 0),
+        docdata.get("shipping_enabled", False),
+        docdata.get("shipping_cost", 0),
+    )
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        info_rows = [
+            ["Document Type", docdata.get("type", "")],
+            ["Document No", docdata.get("number", "")],
+            ["Date", docdata.get("date", "")],
+            ["Currency", docdata.get("currency", "")],
+            ["Customer", docdata.get("bill_to", {}).get("Company Name", "")],
+            ["Grand Total", total],
+        ]
+        pd.DataFrame(info_rows, columns=["Field", "Value"]).to_excel(writer, sheet_name="Document Info", index=False)
+
+        invoice_rows = []
+        for i, p in enumerate(products, 1):
+            qty = float(p.get("Qty", 0) or 0)
+            rate = float(p.get("Rate Per Piece", 0) or 0)
+            invoice_rows.append({
+                "SL": i,
+                "Brand": p.get("Brand", ""),
+                "Product Details": p.get("Product Details", ""),
+                "Size": p.get("Size", ""),
+                "Finish": p.get("Finish", ""),
+                "Qty": qty,
+                "Rate Per Piece": rate,
+                "Total Qty": qty,
+                "Amount": qty * rate,
+            })
+        pd.DataFrame(invoice_rows).to_excel(writer, sheet_name="Invoice", index=False)
+
+        total_rows = [
+            {"Description": "Subtotal", "Amount": subtotal},
+            {"Description": "Discount", "Amount": disc},
+            {"Description": "Shipping", "Amount": shipc},
+            {"Description": "Grand Total", "Amount": total},
+        ]
+        pd.DataFrame(total_rows).to_excel(writer, sheet_name="Totals", index=False)
+
+        pd.DataFrame(BANKS.get(docdata.get("currency", "EUR"), [])).to_excel(writer, sheet_name="Bank Details", index=False)
+
+        pd.DataFrame([{"Terms & Conditions": docdata.get("terms", "")}]).to_excel(writer, sheet_name="Terms", index=False)
+
+        if docdata.get("type") == "Invoice":
+            pd.DataFrame(packing).to_excel(writer, sheet_name="Packing List", index=False)
+            summary = [{
+                "Total Boxes": len(packing),
+                "Total CBM": sum(float(x.get("CBM", 0) or 0) for x in packing),
+                "Total GW": sum(float(x.get("GW", 0) or 0) for x in packing),
+                "Total NW": sum(float(x.get("NW", 0) or 0) for x in packing),
+            }]
+            pd.DataFrame(summary).to_excel(writer, sheet_name="Packing Summary", index=False)
+
+        for sheet in writer.sheets.values():
+            for col in sheet.columns:
+                max_len = 12
+                col_letter = col[0].column_letter
+                for cell in col:
+                    try:
+                        max_len = max(max_len, len(str(cell.value or "")) + 2)
+                    except Exception:
+                        pass
+                sheet.column_dimensions[col_letter].width = min(max_len, 45)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def build_pdf(docdata):
     buffer = BytesIO()
     pdf = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=32*mm, bottomMargin=15*mm)
@@ -244,13 +346,13 @@ def build_pdf(docdata):
         story.append(PageBreak())
         story.append(Paragraph("PACKING LIST", styles["TitleGold"]))
         pack = packing_from_products(docdata["products"], docdata.get("packing",[]))
-        prow = [["SL","Brand","Product Details","Length","Breadth","Height","CBM","GW","NW"]]
+        prow = [["SL","Box No","Part","Brand","Product Details","Length","Breadth","Height","CBM","GW","NW"]]
         for i,p in enumerate(pack, 1):
-            prow.append([i,p["Brand"],Paragraph(p["Product Details"],styles["Tiny"]),p["Length"],p["Breadth"],p["Height"],p["CBM"],p["GW"],p["NW"]])
-        pt = Table(prow, repeatRows=1, colWidths=[8*mm,28*mm,58*mm,15*mm,15*mm,15*mm,18*mm,17*mm,17*mm])
+            prow.append([i,p.get("Box No", i),p.get("Part","1/1"),p["Brand"],Paragraph(p["Product Details"],styles["Tiny"]),p["Length"],p["Breadth"],p["Height"],p["CBM"],p["GW"],p["NW"]])
+        pt = Table(prow, repeatRows=1, colWidths=[7*mm,13*mm,13*mm,24*mm,45*mm,13*mm,13*mm,13*mm,16*mm,16*mm,16*mm])
         pt.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#071c2e")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.25,colors.lightgrey),("FONTSIZE",(0,0),(-1,-1),6.8),("VALIGN",(0,0),(-1,-1),"TOP")]))
         story.append(pt); story.append(Spacer(1,8))
-        story.append(Paragraph(f"<b>Total CBM:</b> {sum(float(x.get('CBM',0) or 0) for x in pack):.3f} &nbsp;&nbsp; <b>Total GW:</b> {sum(float(x.get('GW',0) or 0) for x in pack):.2f} KG &nbsp;&nbsp; <b>Total NW:</b> {sum(float(x.get('NW',0) or 0) for x in pack):.2f} KG", styles["Navy"]))
+        story.append(Paragraph(f"<b>Total Boxes:</b> {len(pack)} &nbsp;&nbsp; <b>Total CBM:</b> {sum(float(x.get('CBM',0) or 0) for x in pack):.3f} &nbsp;&nbsp; <b>Total GW:</b> {sum(float(x.get('GW',0) or 0) for x in pack):.2f} KG &nbsp;&nbsp; <b>Total NW:</b> {sum(float(x.get('NW',0) or 0) for x in pack):.2f} KG", styles["Navy"]))
         story.append(Spacer(1,15))
         story.append(Paragraph("Digital Signature / Authorized Signatory", styles["Navy"]))
         if STAMP_PATH.exists():
@@ -280,6 +382,7 @@ st.markdown("""
 <style>
 .stApp { background:#f7f3ec; }
 .block-container { max-width:1600px; padding-top:1rem; }
+div[data-testid="stButton"] button { font-size: 11px !important; padding: 0.25rem 0.35rem !important; min-height: 30px !important; }
 
 .cap { background:#071c2e; color:white; padding:22px; border-radius:22px; margin-bottom:18px; box-shadow:0 12px 30px #0002; }
 .gold { color:#d0aa65; font-family:Georgia,serif; }
@@ -408,13 +511,64 @@ if st.session_state.page == "Create / Edit":
     packing = []
     if doc_type == "Invoice":
         st.markdown("<div class='card'><h3 class='gold'>Packing List — Mandatory</h3>", unsafe_allow_html=True)
-        pack_init = pd.DataFrame(packing_from_products(products, editing.get("packing", []) if editing else []))
-        pack_edit = st.data_editor(pack_init[PACK_COLS], num_rows="fixed", use_container_width=True, key=f"pack_{st.session_state.editing_id or 'new'}")
+
+        current_packing = editing.get("packing", []) if editing else []
+        pack_init = pd.DataFrame(packing_from_products(products, current_packing))
+        for col in PACK_COLS:
+            if col not in pack_init.columns:
+                pack_init[col] = 0 if col in ["Box No","Length","Breadth","Height","CBM","GW","NW"] else ""
+
+        st.caption("Use Add/Split Box when an item has 2 or more boxes/parts. Each row counts as one box.")
+        product_labels = [f"{i+1}. {p.get('Brand','')} - {p.get('Product Details','')}" for i, p in enumerate(products)]
+        split_cols = st.columns([3, 1, 1])
+        with split_cols[0]:
+            split_choice = st.selectbox("Select item to add another box/part", product_labels if product_labels else ["No products"])
+        with split_cols[1]:
+            part_label = st.text_input("Part label", value="2/2")
+        with split_cols[2]:
+            st.write("")
+            st.write("")
+            if st.button("Add/Split Box"):
+                if products:
+                    idx = product_labels.index(split_choice)
+                    p = products[idx]
+                    new_row = {
+                        "Box No": len(pack_init) + 1,
+                        "Part": part_label or "Part",
+                        "Brand": p.get("Brand", ""),
+                        "Product Details": p.get("Product Details", ""),
+                        "Length": 0.0,
+                        "Breadth": 0.0,
+                        "Height": 0.0,
+                        "CBM": 0.0,
+                        "GW": 0.0,
+                        "NW": 0.0,
+                    }
+                    pack_init = pd.concat([pack_init, pd.DataFrame([new_row])], ignore_index=True)
+
+        pack_edit = st.data_editor(
+            pack_init[PACK_COLS],
+            num_rows="dynamic",
+            use_container_width=True,
+            key=f"pack_{st.session_state.editing_id or 'new'}"
+        )
         packing = pack_edit.fillna(0).to_dict("records")
-        for i,row in enumerate(packing):
-            qty = float(products[i].get("Qty",1) or 1) if i < len(products) else 1
-            row["CBM"] = round(float(row.get("Length",0) or 0)*float(row.get("Breadth",0) or 0)*float(row.get("Height",0) or 0)*qty/1000000, 3)
-        st.write(f"**Total CBM:** {sum(float(x.get('CBM',0) or 0) for x in packing):.3f} | **Total GW:** {sum(float(x.get('GW',0) or 0) for x in packing):.2f} KG | **Total NW:** {sum(float(x.get('NW',0) or 0) for x in packing):.2f} KG")
+        for i, row in enumerate(packing, 1):
+            row["Box No"] = int(row.get("Box No", i) or i)
+            row["CBM"] = round(
+                float(row.get("Length", 0) or 0)
+                * float(row.get("Breadth", 0) or 0)
+                * float(row.get("Height", 0) or 0)
+                / 1000000,
+                3
+            )
+
+        st.write(
+            f"**Total Boxes:** {len(packing)} | "
+            f"**Total CBM:** {sum(float(x.get('CBM',0) or 0) for x in packing):.3f} | "
+            f"**Total GW:** {sum(float(x.get('GW',0) or 0) for x in packing):.2f} KG | "
+            f"**Total NW:** {sum(float(x.get('NW',0) or 0) for x in packing):.2f} KG"
+        )
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.warning("Proforma: packing list is hidden. It will auto-create when converted to Invoice.")
@@ -482,6 +636,7 @@ if st.session_state.page == "Create / Edit":
             st.info("Already an Invoice.")
 
     x3.download_button("Download PDF", data=build_pdf(docdata), file_name=f"{doc_number.replace('/','-')}.pdf", mime="application/pdf")
+    st.download_button("Download Excel", data=build_excel(docdata), file_name=f"{doc_number.replace('/','-')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 if st.session_state.page == "Saved Documents":
     st.markdown("<div class='card'><h3 class='gold'>Saved Documents — Select / Edit / Convert / Delete</h3>", unsafe_allow_html=True)
@@ -535,6 +690,13 @@ if st.session_state.page == "Saved Documents":
                     file_name=f"{d.get('number','document').replace('/','-')}.pdf",
                     mime="application/pdf",
                     key=f"pdf_{d.get('id')}"
+                )
+                d1.download_button(
+                    "Download Excel",
+                    data=build_excel(d),
+                    file_name=f"{d.get('number','document').replace('/','-')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"xlsx_{d.get('id')}"
                 )
 
                 confirm = d2.checkbox(f"Confirm delete {d.get('number','')}", key=f"confirm_delete_{d.get('id')}")
