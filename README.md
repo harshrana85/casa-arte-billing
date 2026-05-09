@@ -1,10 +1,11 @@
-# Casa Arte Privée Billing System — Word + Amount in Words
+# Casa Arte Privée Billing System — Packing Split Persistence Fixed
 
-## Last change only
-- Added Amount in Words to invoice/proforma totals.
-- PDF includes Amount in Words.
-- Replaced Excel download with Word (.docx) download.
-- No other workflow changes.
+## Fix in this version
+- Split packing-list boxes/parts no longer disappear after rerun.
+- Add/Split Box rows are stored in session immediately.
+- Save/Update writes split boxes permanently into documents.json.
+- Reopening the same invoice reloads saved split boxes.
+- PDF and Word use saved split rows.
 
 ## Login
 Password: 1985

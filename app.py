@@ -698,13 +698,44 @@ if st.session_state.page == "Create / Edit":
     if doc_type == "Invoice":
         st.markdown("<div class='card'><h3 class='gold'>Packing List — Mandatory</h3>", unsafe_allow_html=True)
 
-        current_packing = editing.get("packing", []) if editing else []
-        pack_init = pd.DataFrame(packing_from_products(products, current_packing))
-        for col in PACK_COLS:
-            if col not in pack_init.columns:
-                pack_init[col] = 0 if col in ["Box No","Length","Breadth","Height","CBM","GW","NW"] else ""
+        # Persistent packing list state.
+        # This prevents split boxes/parts from disappearing on Streamlit rerun.
+        current_doc_key = editing.get("id") if editing else "new_document"
+        packing_state_key = f"packing_rows_{current_doc_key}"
 
-        st.caption("Use Add/Split Box when an item has 2 or more boxes/parts. Each row counts as one box.")
+        # If user opened a different document, load that document's saved packing rows once.
+        if st.session_state.get("active_packing_doc_key") != current_doc_key:
+            saved_packing = editing.get("packing", []) if editing else []
+            st.session_state[packing_state_key] = packing_from_products(products, saved_packing)
+            st.session_state["active_packing_doc_key"] = current_doc_key
+
+        # If packing was never initialized, initialize from current products.
+        if packing_state_key not in st.session_state:
+            saved_packing = editing.get("packing", []) if editing else []
+            st.session_state[packing_state_key] = packing_from_products(products, saved_packing)
+
+        # Make sure new invoice products get a packing row, but do NOT delete existing split rows.
+        existing_rows = st.session_state[packing_state_key]
+        existing_pairs = {(r.get("Brand", ""), r.get("Product Details", "")) for r in existing_rows}
+        for p in products:
+            pair = (p.get("Brand", ""), p.get("Product Details", ""))
+            if pair not in existing_pairs:
+                existing_rows.append({
+                    "Box No": len(existing_rows) + 1,
+                    "Part": "1/1",
+                    "Brand": p.get("Brand", ""),
+                    "Product Details": p.get("Product Details", ""),
+                    "Length": 0.0,
+                    "Breadth": 0.0,
+                    "Height": 0.0,
+                    "CBM": 0.0,
+                    "GW": 0.0,
+                    "NW": 0.0,
+                })
+                existing_pairs.add(pair)
+
+        st.caption("Use Add/Split Box when an item has 2 or more boxes/parts. Each row counts as one box and will save permanently.")
+
         product_labels = [f"{i+1}. {p.get('Brand','')} - {p.get('Product Details','')}" for i, p in enumerate(products)]
         split_cols = st.columns([3, 1, 1])
         with split_cols[0]:
@@ -718,8 +749,8 @@ if st.session_state.page == "Create / Edit":
                 if products:
                     idx = product_labels.index(split_choice)
                     p = products[idx]
-                    new_row = {
-                        "Box No": len(pack_init) + 1,
+                    st.session_state[packing_state_key].append({
+                        "Box No": len(st.session_state[packing_state_key]) + 1,
                         "Part": part_label or "Part",
                         "Brand": p.get("Brand", ""),
                         "Product Details": p.get("Product Details", ""),
@@ -729,15 +760,21 @@ if st.session_state.page == "Create / Edit":
                         "CBM": 0.0,
                         "GW": 0.0,
                         "NW": 0.0,
-                    }
-                    pack_init = pd.concat([pack_init, pd.DataFrame([new_row])], ignore_index=True)
+                    })
+                    st.rerun()
+
+        pack_init = pd.DataFrame(st.session_state[packing_state_key])
+        for col in PACK_COLS:
+            if col not in pack_init.columns:
+                pack_init[col] = 0 if col in ["Box No","Length","Breadth","Height","CBM","GW","NW"] else ""
 
         pack_edit = st.data_editor(
             pack_init[PACK_COLS],
             num_rows="dynamic",
             use_container_width=True,
-            key=f"pack_{st.session_state.editing_id or 'new'}"
+            key=f"pack_editor_{current_doc_key}"
         )
+
         packing = pack_edit.fillna(0).to_dict("records")
         for i, row in enumerate(packing, 1):
             row["Box No"] = int(row.get("Box No", i) or i)
@@ -748,6 +785,9 @@ if st.session_state.page == "Create / Edit":
                 / 1000000,
                 3
             )
+
+        # Save edited packing rows back into session immediately.
+        st.session_state[packing_state_key] = packing
 
         st.write(
             f"**Total Boxes:** {len(packing)} | "
