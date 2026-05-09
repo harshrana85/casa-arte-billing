@@ -137,21 +137,43 @@ def pdf_header_footer(canvas, doc, title=""):
     canvas.setFont("Helvetica-Bold", 9)
     canvas.drawRightString(w-12*mm, h-20*mm, title)
 
-    # Stamp on every page - light top centre-right
+    canvas.setStrokeColor(colors.HexColor("#d0aa65"))
+    canvas.line(12*mm, h-27*mm, w-12*mm, h-27*mm)
+
+    # Stamp on every page - darker and at bottom-right, above footer
     if STAMP_PATH.exists():
         try:
             canvas.saveState()
-            canvas.setFillAlpha(0.18)
+            canvas.setFillAlpha(0.55)
             canvas.drawImage(
                 str(STAMP_PATH),
-                w-54*mm,
-                h-58*mm,
-                width=34*mm,
-                height=34*mm,
+                w-48*mm,
+                15*mm,
+                width=32*mm,
+                height=32*mm,
                 preserveAspectRatio=True,
                 mask="auto"
             )
             canvas.restoreState()
+        except Exception:
+            canvas.drawImage(
+                str(STAMP_PATH),
+                w-48*mm,
+                15*mm,
+                width=32*mm,
+                height=32*mm,
+                preserveAspectRatio=True,
+                mask="auto"
+            )
+
+    canvas.setFillColor(colors.grey)
+    canvas.setFont("Helvetica", 7)
+    canvas.drawCentredString(
+        w/2,
+        8*mm,
+        f"{COMPANY['name']} | {COMPANY['email']} | Page {canvas.getPageNumber()}"
+    )
+    canvas.restoreState()
         except Exception:
             canvas.drawImage(
                 str(STAMP_PATH),
@@ -425,7 +447,8 @@ with create_tab:
             documents.append(newdoc)
             save_json(DOCUMENTS_FILE, documents)
             st.session_state.editing_id = newdoc["id"]
-            st.success(f"Converted to Invoice: {newdoc['number']}")
+            st.success(f"Converted to Invoice: {newdoc['number']}. Opening converted invoice for editing/packing details...")
+            st.rerun()
         else:
             st.info("Already an Invoice.")
 
@@ -462,16 +485,43 @@ with saved_tab:
                 newdoc["updated_at"] = datetime.now().isoformat(timespec="seconds")
                 documents.append(newdoc)
                 save_json(DOCUMENTS_FILE, documents)
-                st.success(f"Converted: {newdoc['number']}")
+                st.session_state.editing_id = newdoc["id"]
+                st.success(f"Converted: {newdoc['number']}. Opening converted invoice for editing/packing details...")
+                st.rerun()
             else:
                 st.info("Selected document is already an Invoice.")
         c.download_button("Download Selected PDF", data=build_pdf(selected), file_name=f"{selected['number'].replace('/','-')}.pdf", mime="application/pdf")
+
+        st.markdown("---")
+        confirm_delete_doc = st.checkbox(f"Confirm delete document {selected['number']}")
+        if st.button("Delete Selected Document", type="secondary"):
+            if confirm_delete_doc:
+                documents = [d for d in documents if d.get("id") != selected.get("id")]
+                save_json(DOCUMENTS_FILE, documents)
+                if st.session_state.editing_id == selected.get("id"):
+                    st.session_state.editing_id = None
+                st.success(f"Deleted document: {selected['number']}")
+                st.rerun()
+            else:
+                st.warning("Please tick confirm delete first.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 with customers_tab:
     st.markdown("<div class='card'><h3 class='gold'>Customer Database</h3>", unsafe_allow_html=True)
     if customers:
         st.dataframe(pd.DataFrame(customers).drop(columns=["ship_to"], errors="ignore"), use_container_width=True, hide_index=True)
+        customer_names_for_delete = [c.get("Company Name","") for c in customers if c.get("Company Name","")]
+        if customer_names_for_delete:
+            selected_customer_delete = st.selectbox("Select customer to delete", customer_names_for_delete)
+            confirm_delete_customer = st.checkbox(f"Confirm delete customer {selected_customer_delete}")
+            if st.button("Delete Selected Customer", type="secondary"):
+                if confirm_delete_customer:
+                    customers = [c for c in customers if c.get("Company Name","") != selected_customer_delete]
+                    save_json(CUSTOMERS_FILE, customers)
+                    st.success(f"Deleted customer: {selected_customer_delete}")
+                    st.rerun()
+                else:
+                    st.warning("Please tick confirm delete first.")
     else:
         st.info("No customers saved yet.")
     st.markdown("</div>", unsafe_allow_html=True)
