@@ -1,26 +1,21 @@
-# Casa Arte Privée Billing System — Final Revised
+# Casa Arte Privée Billing System — Selection Enabled
+
+## Login
+Password: 1985
+
+## Fixes in this version
+- Sidebar navigation instead of tabs
+- Edit takes you back to data entry page
+- Convert PI to Invoice opens converted invoice entry page
+- Delete button next to every saved document
+- Download PDF next to every saved document
+- Delete customer option remains in Customers page
+- Darker bottom-right stamp on PDF pages
 
 ## Run
 pip install -r requirements.txt
 streamlit run app.py
 
-## Login
-Password: 1985
-
-## Latest fixes
-- Delete saved invoices/proformas
-- Delete saved customers
-- Edit selected document opens it back in entry page
-- Convert Proforma to Invoice opens converted invoice immediately for packing/cost edits
-- Stamp is darker and moved to bottom-right of every PDF page
-- Shipping charges field works after ticking Add Shipping Charges
-
-## Streamlit Deploy
-Upload to GitHub, then deploy on Streamlit Cloud.
-Main file: app.py
-
-## Storage
-Local JSON files:
-- data/documents.json
-- data/customers.json
-- data/settings.json
+## Deploy on Streamlit Cloud
+Upload all files to GitHub.
+Main file path: app.py

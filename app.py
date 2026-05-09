@@ -295,9 +295,21 @@ documents = load_json(DOCUMENTS_FILE, [])
 
 if "editing_id" not in st.session_state: st.session_state.editing_id = None
 
-create_tab, saved_tab, customers_tab, settings_tab = st.tabs(["Create / Edit", "Saved Documents", "Customers", "Settings"])
 
-with create_tab:
+st.sidebar.markdown("## CASA ARTE PRIVÉE")
+if "page" not in st.session_state:
+    st.session_state.page = "Create / Edit"
+
+page = st.sidebar.radio(
+    "Navigation",
+    ["Create / Edit", "Saved Documents", "Customers", "Settings"],
+    index=["Create / Edit", "Saved Documents", "Customers", "Settings"].index(st.session_state.page),
+    key="page_radio"
+)
+st.session_state.page = page
+
+
+if st.session_state.page == "Create / Edit":
     editing = next((d for d in documents if d.get("id") == st.session_state.editing_id), None) if st.session_state.editing_id else None
 
     c1,c2,c3,c4 = st.columns(4)
@@ -308,6 +320,7 @@ with create_tab:
 
     if st.button("Start New Blank Document"):
         st.session_state.editing_id = None
+        st.session_state.page = "Create / Edit"
         st.rerun()
 
     st.markdown("<div class='card'><h3 class='gold'>Customer Details</h3>", unsafe_allow_html=True)
@@ -429,6 +442,7 @@ with create_tab:
             documents.append(newdoc)
             save_json(DOCUMENTS_FILE, documents)
             st.session_state.editing_id = newdoc["id"]
+            st.session_state.page = "Create / Edit"
             st.success(f"Converted to Invoice: {newdoc['number']}. Opening converted invoice for editing/packing details...")
             st.rerun()
         else:
@@ -436,59 +450,74 @@ with create_tab:
 
     x3.download_button("Download PDF", data=build_pdf(docdata), file_name=f"{doc_number.replace('/','-')}.pdf", mime="application/pdf")
 
-with saved_tab:
-    st.markdown("<div class='card'><h3 class='gold'>Saved Documents — Edit / Convert / Download</h3>", unsafe_allow_html=True)
-    search = st.text_input("Search saved documents")
+if st.session_state.page == "Saved Documents":
+    st.markdown("<div class='card'><h3 class='gold'>Saved Documents — Select / Edit / Convert / Delete</h3>", unsafe_allow_html=True)
+    search = st.text_input("Search saved documents by number, customer, type, currency")
     results = documents
     if search:
         s = search.lower()
         results = [d for d in documents if s in json.dumps(d, ensure_ascii=False).lower()]
+
     if not results:
         st.warning("No documents saved.")
     else:
-        display = []
-        for d in results:
-            display.append({"Number":d["number"],"Type":d["type"],"Customer":d.get("bill_to",{}).get("Company Name",""),"Date":d["date"],"Currency":d["currency"],"Total":money(d.get("total",0), d["currency"])})
-        st.dataframe(pd.DataFrame(display), use_container_width=True, hide_index=True)
-        choice = st.selectbox("Select document", [d["number"] for d in results])
-        selected = next(d for d in results if d["number"] == choice)
-        a,b,c = st.columns(3)
-        if a.button("Edit Existing Document"):
-            st.session_state.editing_id = selected["id"]
-            st.rerun()
-        if b.button("Convert Selected Proforma to Invoice"):
-            if selected["type"] == "Proforma Invoice":
-                newdoc = dict(selected)
-                newdoc["id"] = str(uuid.uuid4())
-                newdoc["type"] = "Invoice"
-                newdoc["number"] = next_number("Invoice", documents)
-                newdoc["packing"] = packing_from_products(newdoc["products"])
-                newdoc["created_at"] = datetime.now().isoformat(timespec="seconds")
-                newdoc["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                documents.append(newdoc)
-                save_json(DOCUMENTS_FILE, documents)
-                st.session_state.editing_id = newdoc["id"]
-                st.success(f"Converted: {newdoc['number']}. Opening converted invoice for editing/packing details...")
-                st.rerun()
-            else:
-                st.info("Selected document is already an Invoice.")
-        c.download_button("Download Selected PDF", data=build_pdf(selected), file_name=f"{selected['number'].replace('/','-')}.pdf", mime="application/pdf")
+        st.caption("Each document has its own Edit, Convert, Download and Delete action. Edit/Convert will take you back to the data entry page.")
+        for d in sorted(results, key=lambda x: x.get("updated_at", x.get("created_at","")), reverse=True):
+            customer_name = d.get("bill_to", {}).get("Company Name", "")
+            row = st.container(border=True)
+            with row:
+                c0, c1, c2, c3, c4, c5 = st.columns([2.4, 1.3, 2.2, 1.1, 1.2, 1.8])
+                c0.markdown(f"**{d.get('number','')}**")
+                c0.caption(f"{d.get('date','')} · {d.get('currency','')}")
+                c1.markdown(f"**{d.get('type','')}**")
+                c2.markdown(customer_name or "No customer")
+                c3.markdown(f"**{money(d.get('total',0), d.get('currency','EUR'))}**")
 
-        st.markdown("---")
-        confirm_delete_doc = st.checkbox(f"Confirm delete document {selected['number']}")
-        if st.button("Delete Selected Document", type="secondary"):
-            if confirm_delete_doc:
-                documents = [d for d in documents if d.get("id") != selected.get("id")]
-                save_json(DOCUMENTS_FILE, documents)
-                if st.session_state.editing_id == selected.get("id"):
-                    st.session_state.editing_id = None
-                st.success(f"Deleted document: {selected['number']}")
-                st.rerun()
-            else:
-                st.warning("Please tick confirm delete first.")
+                if c4.button("Edit", key=f"edit_{d.get('id')}"):
+                    st.session_state.editing_id = d.get("id")
+                    st.session_state.page = "Create / Edit"
+                    st.rerun()
+
+                if d.get("type") == "Proforma Invoice":
+                    if c5.button("Convert to Invoice", key=f"convert_{d.get('id')}"):
+                        newdoc = dict(d)
+                        newdoc["id"] = str(uuid.uuid4())
+                        newdoc["type"] = "Invoice"
+                        newdoc["number"] = next_number("Invoice", documents)
+                        newdoc["packing"] = packing_from_products(newdoc.get("products", []))
+                        newdoc["created_at"] = datetime.now().isoformat(timespec="seconds")
+                        newdoc["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                        documents.append(newdoc)
+                        save_json(DOCUMENTS_FILE, documents)
+                        st.session_state.editing_id = newdoc["id"]
+                        st.session_state.page = "Create / Edit"
+                        st.rerun()
+                else:
+                    c5.caption("Already invoice")
+
+                d1, d2 = st.columns([1.2, 2])
+                d1.download_button(
+                    "Download PDF",
+                    data=build_pdf(d),
+                    file_name=f"{d.get('number','document').replace('/','-')}.pdf",
+                    mime="application/pdf",
+                    key=f"pdf_{d.get('id')}"
+                )
+
+                confirm = d2.checkbox(f"Confirm delete {d.get('number','')}", key=f"confirm_delete_{d.get('id')}")
+                if d2.button("Delete", key=f"delete_{d.get('id')}", type="secondary"):
+                    if confirm:
+                        documents = [x for x in documents if x.get("id") != d.get("id")]
+                        save_json(DOCUMENTS_FILE, documents)
+                        if st.session_state.editing_id == d.get("id"):
+                            st.session_state.editing_id = None
+                        st.success(f"Deleted {d.get('number','document')}")
+                        st.rerun()
+                    else:
+                        st.warning("Tick confirm delete first.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-with customers_tab:
+if st.session_state.page == "Customers":
     st.markdown("<div class='card'><h3 class='gold'>Customer Database</h3>", unsafe_allow_html=True)
     if customers:
         st.dataframe(pd.DataFrame(customers).drop(columns=["ship_to"], errors="ignore"), use_container_width=True, hide_index=True)
@@ -508,7 +537,7 @@ with customers_tab:
         st.info("No customers saved yet.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-with settings_tab:
+if st.session_state.page == "Settings":
     st.markdown("<div class='card'><h3 class='gold'>Settings</h3>", unsafe_allow_html=True)
     st.write("Password is currently set to **1985**.")
     new_terms = st.text_area("Default Terms & Conditions", value=settings.get("terms",""), height=430)
