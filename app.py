@@ -298,20 +298,25 @@ if "editing_id" not in st.session_state: st.session_state.editing_id = None
 
 
 st.sidebar.markdown("## CASA ARTE PRIVÉE")
+PAGES = ["Create / Edit", "Saved Documents", "Customers", "Settings"]
+
 if "page" not in st.session_state:
     st.session_state.page = "Create / Edit"
 
-page = st.sidebar.radio(
-    "Navigation",
-    ["Create / Edit", "Saved Documents", "Customers", "Settings"],
-    index=["Create / Edit", "Saved Documents", "Customers", "Settings"].index(st.session_state.page),
-    key="page_radio"
-)
-st.session_state.page = page
-# Force open entry page after edit/convert actions
+# URL query can force navigation after edit/convert/save actions.
 qp = st.query_params.get("page")
 if qp == "create":
     st.session_state.page = "Create / Edit"
+elif qp == "saved":
+    st.session_state.page = "Saved Documents"
+
+page = st.sidebar.radio(
+    "Navigation",
+    PAGES,
+    index=PAGES.index(st.session_state.page),
+    key="page_radio"
+)
+st.session_state.page = page
 
 
 
@@ -424,17 +429,31 @@ if st.session_state.page == "Create / Edit":
             cust = dict(bill_to)
             cust["ship_to"] = bill_to if ship_same else ship_to
             found = next((i for i,c in enumerate(customers) if c.get("Company Name","").lower()==bill_company.lower()), None)
-            if found is None: customers.append(cust)
-            else: customers[found] = cust
+            if found is None:
+                customers.append(cust)
+            else:
+                customers[found] = cust
             save_json(CUSTOMERS_FILE, customers)
-        idx = next((i for i,d in enumerate(documents) if d.get("id")==docdata["id"]), None)
+
+        # IMPORTANT: if editing existing document, update the same record by ID.
+        # If creating new, append only once.
+        existing_id = editing.get("id") if editing else docdata.get("id")
+        docdata["id"] = existing_id
+
+        idx = next((i for i,d in enumerate(documents) if d.get("id") == existing_id), None)
         if idx is None:
             documents.append(docdata)
         else:
             documents[idx] = docdata
+
         save_json(DOCUMENTS_FILE, documents)
-        st.session_state.editing_id = docdata["id"]
-        st.success(f"Saved: {docdata['number']}")
+
+        # After save/update, return to Saved Documents list.
+        st.session_state.editing_id = None
+        st.session_state.page = "Saved Documents"
+        st.query_params["page"] = "saved"
+        st.success(f"Saved / Updated: {docdata['number']}")
+        st.rerun()
 
     if x2.button("Convert Proforma to Invoice"):
         if doc_type == "Proforma Invoice":
@@ -519,6 +538,8 @@ if st.session_state.page == "Saved Documents":
                         save_json(DOCUMENTS_FILE, documents)
                         if st.session_state.editing_id == d.get("id"):
                             st.session_state.editing_id = None
+                        st.session_state.page = "Saved Documents"
+                        st.query_params["page"] = "saved"
                         st.success(f"Deleted {d.get('number','document')}")
                         st.rerun()
                     else:
