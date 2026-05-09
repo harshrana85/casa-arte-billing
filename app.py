@@ -280,6 +280,7 @@ st.markdown("""
 <style>
 .stApp { background:#f7f3ec; }
 .block-container { max-width:1500px; padding-top:1rem; }
+section[data-testid="stSidebar"] { width: 210px !important; min-width: 210px !important; }
 .cap { background:#071c2e; color:white; padding:22px; border-radius:22px; margin-bottom:18px; box-shadow:0 12px 30px #0002; }
 .gold { color:#d0aa65; font-family:Georgia,serif; }
 .card { background:white; border:1px solid #eadfcd; border-radius:18px; padding:16px; margin-bottom:16px; box-shadow:0 8px 24px #071c2e10; }
@@ -307,6 +308,11 @@ page = st.sidebar.radio(
     key="page_radio"
 )
 st.session_state.page = page
+# Force open entry page after edit/convert actions
+qp = st.query_params.get("page")
+if qp == "create":
+    st.session_state.page = "Create / Edit"
+
 
 
 if st.session_state.page == "Create / Edit":
@@ -467,7 +473,7 @@ if st.session_state.page == "Saved Documents":
             row = st.container(border=True)
             with row:
                 c0, c1, c2, c3, c4, c5 = st.columns([2.4, 1.3, 2.2, 1.1, 1.2, 1.8])
-                c0.markdown(f"**{d.get('number','')}**")
+                c0.markdown(f"### {d.get('number','')}")
                 c0.caption(f"{d.get('date','')} · {d.get('currency','')}")
                 c1.markdown(f"**{d.get('type','')}**")
                 c2.markdown(customer_name or "No customer")
@@ -476,6 +482,7 @@ if st.session_state.page == "Saved Documents":
                 if c4.button("Edit", key=f"edit_{d.get('id')}"):
                     st.session_state.editing_id = d.get("id")
                     st.session_state.page = "Create / Edit"
+                    st.query_params["page"] = "create"
                     st.rerun()
 
                 if d.get("type") == "Proforma Invoice":
@@ -491,6 +498,7 @@ if st.session_state.page == "Saved Documents":
                         save_json(DOCUMENTS_FILE, documents)
                         st.session_state.editing_id = newdoc["id"]
                         st.session_state.page = "Create / Edit"
+                        st.query_params["page"] = "create"
                         st.rerun()
                 else:
                     c5.caption("Already invoice")
