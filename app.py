@@ -757,6 +757,7 @@ if st.session_state.page == "Create / Edit":
         current_doc_key = editing.get("id") if editing else "new_document"
         packing_state_key = f"packing_rows_{current_doc_key}"
 
+        # Load saved packing rows only once per document.
         if st.session_state.get("active_packing_doc_key") != current_doc_key:
             saved_packing = editing.get("packing", []) if editing else []
             st.session_state[packing_state_key] = clean_packing_rows(packing_from_products(products, saved_packing))
@@ -766,17 +767,16 @@ if st.session_state.page == "Create / Edit":
             saved_packing = editing.get("packing", []) if editing else []
             st.session_state[packing_state_key] = clean_packing_rows(packing_from_products(products, saved_packing))
 
-        existing_rows = clean_packing_rows(st.session_state[packing_state_key])
-        existing_pairs = {(r.get("Brand", ""), r.get("Product Details", "")) for r in existing_rows}
-
-        # Add one default packing row only for each actual invoice product.
+        # Add missing product rows without removing split rows.
+        rows = clean_packing_rows(st.session_state[packing_state_key])
+        existing_pairs = {(r.get("Brand", ""), r.get("Product Details", "")) for r in rows}
         for p in products:
             if not str(p.get("Brand", "")).strip() and not str(p.get("Product Details", "")).strip():
                 continue
             pair = (p.get("Brand", ""), p.get("Product Details", ""))
             if pair not in existing_pairs:
-                existing_rows.append({
-                    "Box No": len(existing_rows) + 1,
+                rows.append({
+                    "Box No": len(rows) + 1,
                     "Part": "1/1",
                     "Brand": p.get("Brand", ""),
                     "Product Details": p.get("Product Details", ""),
@@ -788,10 +788,10 @@ if st.session_state.page == "Create / Edit":
                     "NW": 0.0,
                 })
                 existing_pairs.add(pair)
+        rows = clean_packing_rows(rows)
+        st.session_state[packing_state_key] = rows
 
-        st.session_state[packing_state_key] = clean_packing_rows(existing_rows)
-
-        st.caption("Use Add/Split Box when an item has 2 or more boxes/parts. Blank rows are ignored and not counted.")
+        st.caption("Stable entry mode: values will not reset while typing. Use Add/Split Box for multiple boxes/parts.")
 
         product_labels = [
             f"{i+1}. {p.get('Brand','')} - {p.get('Product Details','')}"
@@ -801,13 +801,13 @@ if st.session_state.page == "Create / Edit":
 
         split_cols = st.columns([3, 1, 1])
         with split_cols[0]:
-            split_choice = st.selectbox("Select item to add another box/part", product_labels if product_labels else ["No products"])
+            split_choice = st.selectbox("Select item to add another box/part", product_labels if product_labels else ["No products"], key=f"split_choice_{current_doc_key}")
         with split_cols[1]:
-            part_label = st.text_input("Part label", value="2/2")
+            part_label = st.text_input("Part label", value="2/2", key=f"part_label_{current_doc_key}")
         with split_cols[2]:
             st.write("")
             st.write("")
-            if st.button("Add/Split Box"):
+            if st.button("Add/Split Box", key=f"add_split_{current_doc_key}"):
                 if product_labels:
                     original_index = int(split_choice.split(".")[0]) - 1
                     p = products[original_index]
@@ -826,35 +826,69 @@ if st.session_state.page == "Create / Edit":
                     st.session_state[packing_state_key] = clean_packing_rows(st.session_state[packing_state_key])
                     st.rerun()
 
-        pack_init = pd.DataFrame(st.session_state[packing_state_key])
-        for col in PACK_COLS:
-            if col not in pack_init.columns:
-                pack_init[col] = 0 if col in ["Box No","Length","Breadth","Height","CBM","GW","NW"] else ""
+        st.markdown("#### Packing Rows")
+        header_cols = st.columns([0.7, 1.0, 1.0, 1.8, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.8])
+        headers = ["Box", "Part", "Brand", "Product", "Details", "L", "B", "H", "GW", "NW", "Del"]
+        for col, h in zip(header_cols, headers):
+            col.markdown(f"**{h}**")
 
-        pack_edit = st.data_editor(
-            pack_init[PACK_COLS],
-            num_rows="dynamic",
-            use_container_width=True,
-            key=f"pack_editor_{current_doc_key}"
-        )
+        updated_rows = []
+        delete_index = None
 
-        edited_rows = pack_edit.to_dict("records")
+        for idx, row in enumerate(clean_packing_rows(st.session_state[packing_state_key])):
+            row_key = f"{current_doc_key}_{idx}_{row.get('Brand','')}_{row.get('Product Details','')}_{row.get('Part','')}"
+            c = st.columns([0.7, 1.0, 1.0, 1.8, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.8])
 
-        # Merge edited values into session state instead of rebuilding from zero.
-        packing = merge_packing_values(st.session_state[packing_state_key], edited_rows)
+            box_no = idx + 1
+            c[0].write(box_no)
+            part = c[1].text_input("Part", value=str(row.get("Part", "1/1")), key=f"pl_part_{row_key}", label_visibility="collapsed")
+            brand = c[2].text_input("Brand", value=str(row.get("Brand", "")), key=f"pl_brand_{row_key}", label_visibility="collapsed")
+            product = c[3].text_input("Product", value=str(row.get("Product Details", "")), key=f"pl_product_{row_key}", label_visibility="collapsed")
+            details = c[4].caption(str(row.get("Product Details", "")))
+
+            length = c[5].number_input("L", min_value=0.0, value=float(row.get("Length", 0) or 0), step=1.0, key=f"pl_l_{row_key}", label_visibility="collapsed")
+            breadth = c[6].number_input("B", min_value=0.0, value=float(row.get("Breadth", 0) or 0), step=1.0, key=f"pl_b_{row_key}", label_visibility="collapsed")
+            height = c[7].number_input("H", min_value=0.0, value=float(row.get("Height", 0) or 0), step=1.0, key=f"pl_h_{row_key}", label_visibility="collapsed")
+            gw = c[8].number_input("GW", min_value=0.0, value=float(row.get("GW", 0) or 0), step=0.1, key=f"pl_gw_{row_key}", label_visibility="collapsed")
+            nw = c[9].number_input("NW", min_value=0.0, value=float(row.get("NW", 0) or 0), step=0.1, key=f"pl_nw_{row_key}", label_visibility="collapsed")
+
+            if c[10].button("X", key=f"pl_del_{row_key}"):
+                delete_index = idx
+
+            cbm_value = round(float(length or 0) * float(breadth or 0) * float(height or 0) / 1000000, 3)
+
+            updated_rows.append({
+                "Box No": box_no,
+                "Part": part,
+                "Brand": brand,
+                "Product Details": product,
+                "Length": float(length or 0),
+                "Breadth": float(breadth or 0),
+                "Height": float(height or 0),
+                "CBM": cbm_value,
+                "GW": float(gw or 0),
+                "NW": float(nw or 0),
+            })
+
+        if delete_index is not None:
+            updated_rows.pop(delete_index)
+            st.session_state[packing_state_key] = clean_packing_rows(updated_rows)
+            st.rerun()
+
+        packing = clean_packing_rows(updated_rows)
         st.session_state[packing_state_key] = packing
 
         auto_summary = packing_summary(packing)
 
         st.markdown("**Packing Summary**")
-        packing_manual_override = st.checkbox("Manual override summary totals", value=False)
+        packing_manual_override = st.checkbox("Manual override summary totals", value=False, key=f"manual_override_{current_doc_key}")
         sc1, sc2, sc3, sc4 = st.columns(4)
 
         if packing_manual_override:
-            total_boxes = sc1.number_input("Total Boxes", min_value=0, value=int(auto_summary["Total Boxes"]))
-            total_cbm = sc2.number_input("Total CBM", min_value=0.0, value=float(auto_summary["Total CBM"]), format="%.3f")
-            total_gw = sc3.number_input("Total GW", min_value=0.0, value=float(auto_summary["Total GW"]), format="%.2f")
-            total_nw = sc4.number_input("Total NW", min_value=0.0, value=float(auto_summary["Total NW"]), format="%.2f")
+            total_boxes = sc1.number_input("Total Boxes", min_value=0, value=int(auto_summary["Total Boxes"]), key=f"sum_boxes_{current_doc_key}")
+            total_cbm = sc2.number_input("Total CBM", min_value=0.0, value=float(auto_summary["Total CBM"]), format="%.3f", key=f"sum_cbm_{current_doc_key}")
+            total_gw = sc3.number_input("Total GW", min_value=0.0, value=float(auto_summary["Total GW"]), format="%.2f", key=f"sum_gw_{current_doc_key}")
+            total_nw = sc4.number_input("Total NW", min_value=0.0, value=float(auto_summary["Total NW"]), format="%.2f", key=f"sum_nw_{current_doc_key}")
         else:
             total_boxes = auto_summary["Total Boxes"]
             total_cbm = auto_summary["Total CBM"]

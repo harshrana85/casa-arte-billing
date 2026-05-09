@@ -1,11 +1,13 @@
-# Casa Arte Privée Billing System — Packing No Reset While Typing
+# Casa Arte Privée Billing System — Stable PL Inputs
 
 ## Fix
-- Packing List values no longer reset while entering.
-- Length, Breadth, Height, GW, NW stay exactly as typed.
-- CBM recalculates after preserving typed values.
-- Split boxes remain saved.
-- Blank rows are ignored.
+- Packing List no longer uses Streamlit data_editor.
+- Length, Breadth, Height, GW, NW will not reset while typing.
+- Each packing row uses stable individual input fields.
+- Split boxes stay on screen and save permanently.
+- Delete box row with X.
+- Summary updates live.
+- Manual override remains.
 
 ## Login
 Password: 1985
