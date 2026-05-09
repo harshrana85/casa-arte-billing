@@ -1,12 +1,11 @@
-# Casa Arte Privée Billing System — PL Summary Override Fixed
+# Casa Arte Privée Billing System — Packing No Reset While Typing
 
-## Fixes
-- Blank/empty packing rows are ignored and not counted.
-- Unnecessary blank row in PDF/Word removed.
-- Split item into 2 boxes now counts correctly.
-- Live packing summary updates on entry page.
-- Manual override added for Total Boxes, Total CBM, Total GW, Total NW.
-- PDF and Word use manual override if enabled.
+## Fix
+- Packing List values no longer reset while entering.
+- Length, Breadth, Height, GW, NW stay exactly as typed.
+- CBM recalculates after preserving typed values.
+- Split boxes remain saved.
+- Blank rows are ignored.
 
 ## Login
 Password: 1985

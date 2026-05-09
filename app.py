@@ -109,6 +109,36 @@ def clean_packing_rows(rows):
         row["Box No"] = idx
     return cleaned
 
+
+def packing_row_key(row):
+    return f"{row.get('Box No','')}|{row.get('Part','')}|{row.get('Brand','')}|{row.get('Product Details','')}"
+
+def merge_packing_values(old_rows, edited_rows):
+    """Preserve manually typed Length/Breadth/Height/GW/NW values during Streamlit reruns."""
+    old_by_key = {packing_row_key(r): r for r in old_rows or []}
+    merged = []
+    for row in edited_rows or []:
+        if not is_real_packing_row(row):
+            continue
+        key = packing_row_key(row)
+        old = old_by_key.get(key, {})
+        new_row = dict(row)
+
+        # If Streamlit temporarily sends blank/zero during rerun, keep old manual value.
+        for field in ["Length", "Breadth", "Height", "GW", "NW"]:
+            val = new_row.get(field, "")
+            old_val = old.get(field, "")
+            if (val == "" or val is None) and old_val not in ["", None]:
+                new_row[field] = old_val
+
+        l = float(new_row.get("Length", 0) or 0)
+        b = float(new_row.get("Breadth", 0) or 0)
+        h = float(new_row.get("Height", 0) or 0)
+        new_row["CBM"] = round(l * b * h / 1000000, 3)
+        merged.append(new_row)
+
+    return clean_packing_rows(merged)
+
 def packing_summary(rows):
     real_rows = clean_packing_rows(rows)
     return {
@@ -796,7 +826,7 @@ if st.session_state.page == "Create / Edit":
                     st.session_state[packing_state_key] = clean_packing_rows(st.session_state[packing_state_key])
                     st.rerun()
 
-        pack_init = pd.DataFrame(clean_packing_rows(st.session_state[packing_state_key]))
+        pack_init = pd.DataFrame(st.session_state[packing_state_key])
         for col in PACK_COLS:
             if col not in pack_init.columns:
                 pack_init[col] = 0 if col in ["Box No","Length","Breadth","Height","CBM","GW","NW"] else ""
@@ -808,23 +838,10 @@ if st.session_state.page == "Create / Edit":
             key=f"pack_editor_{current_doc_key}"
         )
 
-        packing = pack_edit.fillna("").to_dict("records")
-        real_packing = []
-        for row in packing:
-            if not is_real_packing_row(row):
-                continue
-            row["CBM"] = round(
-                float(row.get("Length", 0) or 0)
-                * float(row.get("Breadth", 0) or 0)
-                * float(row.get("Height", 0) or 0)
-                / 1000000,
-                3
-            )
-            row["GW"] = float(row.get("GW", 0) or 0)
-            row["NW"] = float(row.get("NW", 0) or 0)
-            real_packing.append(row)
+        edited_rows = pack_edit.to_dict("records")
 
-        packing = clean_packing_rows(real_packing)
+        # Merge edited values into session state instead of rebuilding from zero.
+        packing = merge_packing_values(st.session_state[packing_state_key], edited_rows)
         st.session_state[packing_state_key] = packing
 
         auto_summary = packing_summary(packing)
