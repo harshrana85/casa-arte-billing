@@ -279,8 +279,8 @@ if not st.session_state.auth:
 st.markdown("""
 <style>
 .stApp { background:#f7f3ec; }
-.block-container { max-width:1500px; padding-top:1rem; }
-section[data-testid="stSidebar"] { width: 210px !important; min-width: 210px !important; }
+.block-container { max-width:1600px; padding-top:1rem; }
+
 .cap { background:#071c2e; color:white; padding:22px; border-radius:22px; margin-bottom:18px; box-shadow:0 12px 30px #0002; }
 .gold { color:#d0aa65; font-family:Georgia,serif; }
 .card { background:white; border:1px solid #eadfcd; border-radius:18px; padding:16px; margin-bottom:16px; box-shadow:0 8px 24px #071c2e10; }
@@ -297,31 +297,40 @@ documents = load_json(DOCUMENTS_FILE, [])
 if "editing_id" not in st.session_state: st.session_state.editing_id = None
 
 
-st.sidebar.markdown("## CASA ARTE PRIVÉE")
+
 PAGES = ["Create / Edit", "Saved Documents", "Customers", "Settings"]
 
 if "page" not in st.session_state:
     st.session_state.page = "Create / Edit"
 
-# URL query can force navigation after edit/convert/save actions.
-qp = st.query_params.get("page")
-if qp == "create":
+# Hidden navigation intent used by Edit / Convert / Save actions.
+if "force_page" in st.session_state:
+    st.session_state.page = st.session_state.force_page
+    del st.session_state.force_page
+
+# Compact top navigation - no wide sidebar.
+nav_cols = st.columns([1, 1, 1, 1, 6])
+if nav_cols[0].button("Create / Edit", use_container_width=True):
     st.session_state.page = "Create / Edit"
-elif qp == "saved":
+    st.rerun()
+if nav_cols[1].button("Saved", use_container_width=True):
     st.session_state.page = "Saved Documents"
+    st.rerun()
+if nav_cols[2].button("Customers", use_container_width=True):
+    st.session_state.page = "Customers"
+    st.rerun()
+if nav_cols[3].button("Settings", use_container_width=True):
+    st.session_state.page = "Settings"
+    st.rerun()
 
-page = st.sidebar.radio(
-    "Navigation",
-    PAGES,
-    index=PAGES.index(st.session_state.page),
-    key="page_radio"
-)
-st.session_state.page = page
-
-
+st.caption(f"Current page: {st.session_state.page}")
 
 if st.session_state.page == "Create / Edit":
     editing = next((d for d in documents if d.get("id") == st.session_state.editing_id), None) if st.session_state.editing_id else None
+    if editing:
+        st.success(f"Editing existing document: {editing.get('number','')}. Saving will update the SAME document.")
+    else:
+        st.info("Creating a new document.")
 
     c1,c2,c3,c4 = st.columns(4)
     doc_type = c1.selectbox("Document Type", ["Proforma Invoice","Invoice"], index=1 if editing and editing.get("type")=="Invoice" else 0)
@@ -450,8 +459,7 @@ if st.session_state.page == "Create / Edit":
 
         # After save/update, return to Saved Documents list.
         st.session_state.editing_id = None
-        st.session_state.page = "Saved Documents"
-        st.query_params["page"] = "saved"
+        st.session_state.force_page = "Saved Documents"
         st.success(f"Saved / Updated: {docdata['number']}")
         st.rerun()
 
@@ -500,8 +508,7 @@ if st.session_state.page == "Saved Documents":
 
                 if c4.button("Edit", key=f"edit_{d.get('id')}"):
                     st.session_state.editing_id = d.get("id")
-                    st.session_state.page = "Create / Edit"
-                    st.query_params["page"] = "create"
+                    st.session_state.force_page = "Create / Edit"
                     st.rerun()
 
                 if d.get("type") == "Proforma Invoice":
@@ -516,8 +523,7 @@ if st.session_state.page == "Saved Documents":
                         documents.append(newdoc)
                         save_json(DOCUMENTS_FILE, documents)
                         st.session_state.editing_id = newdoc["id"]
-                        st.session_state.page = "Create / Edit"
-                        st.query_params["page"] = "create"
+                        st.session_state.force_page = "Create / Edit"
                         st.rerun()
                 else:
                     c5.caption("Already invoice")
@@ -538,8 +544,7 @@ if st.session_state.page == "Saved Documents":
                         save_json(DOCUMENTS_FILE, documents)
                         if st.session_state.editing_id == d.get("id"):
                             st.session_state.editing_id = None
-                        st.session_state.page = "Saved Documents"
-                        st.query_params["page"] = "saved"
+                        st.session_state.force_page = "Saved Documents"
                         st.success(f"Deleted {d.get('number','document')}")
                         st.rerun()
                     else:
