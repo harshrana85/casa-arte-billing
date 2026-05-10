@@ -301,19 +301,32 @@ def extract_docx_to_document(uploaded_file, existing_terms=""):
     packing_rows = []
 
     def clean_number(value):
-        raw = str(value or "").replace(",", "").replace("€", "").replace("$", "").replace("AED", "").strip()
+        import re
+        raw = str(value or "").replace("\n", " ").replace("\t", " ")
+        raw = raw.replace(",", "").replace("€", "").replace("$", "").replace("AED", "").replace("CBM", "").strip()
         # handle combined values like "12 / 10"
         if "/" in raw:
             raw = raw.split("/")[0].strip()
-        try:
-            return float(raw)
-        except Exception:
-            return 0.0
+        match = re.search(r"-?\d+(?:\.\d+)?", raw)
+        if match:
+            try:
+                return float(match.group(0))
+            except Exception:
+                return 0.0
+        return 0.0
 
     def get_cell(row_map, possible_names):
+        normalized = {str(k).lower().strip(): v for k, v in row_map.items()}
+        # exact first
         for name in possible_names:
-            for k, v in row_map.items():
-                if k == name or name in k:
+            name = str(name).lower().strip()
+            if name in normalized:
+                return normalized[name]
+        # then contains
+        for name in possible_names:
+            name = str(name).lower().strip()
+            for k, v in normalized.items():
+                if name in k:
                     return v
         return ""
 
@@ -360,6 +373,9 @@ def extract_docx_to_document(uploaded_file, existing_terms=""):
                 if not brand and not product_details:
                     continue
 
+                cbm_cell_value = get_cell(row_map, ["cbm", "c.b.m", "cubic", "m3", "m³"])
+                imported_cbm = clean_number(cbm_cell_value)
+
                 pack = {
                     "Box No": int(clean_number(get_cell(row_map, ["box no", "box"])) or len(packing_rows) + 1),
                     "Part": get_cell(row_map, ["part"]) or "1/1",
@@ -368,12 +384,13 @@ def extract_docx_to_document(uploaded_file, existing_terms=""):
                     "Length": clean_number(get_cell(row_map, ["length", "l"])),
                     "Breadth": clean_number(get_cell(row_map, ["breadth", "width", "b"])),
                     "Height": clean_number(get_cell(row_map, ["height", "h"])),
-                    "CBM": clean_number(get_cell(row_map, ["cbm"])),
+                    "CBM": imported_cbm,
                     "GW": clean_number(get_cell(row_map, ["gw", "gross"])),
                     "NW": clean_number(get_cell(row_map, ["nw", "net"])),
                 }
 
-                if pack["CBM"] == 0 and (pack["Length"] or pack["Breadth"] or pack["Height"]):
+                # Only auto-calculate CBM if Word did not contain a CBM value.
+                if pack["CBM"] == 0 and not str(cbm_cell_value or "").strip() and (pack["Length"] or pack["Breadth"] or pack["Height"]):
                     pack["CBM"] = round(pack["Length"] * pack["Breadth"] * pack["Height"] / 1000000, 3)
 
                 packing_rows.append(pack)

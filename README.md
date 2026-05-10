@@ -1,11 +1,10 @@
-# Casa Arte Privée Billing System — Word PL Roundtrip Fixed
+# Casa Arte Privée Billing System — Word Import CBM Fixed
 
 ## Fix
-- Word download now exports Packing List with separate CBM, GW, and NW columns.
-- No packing row data should go missing in Word.
-- Uploading the Word file back now imports packing data correctly.
-- CBM values are imported and preserved.
-- Packing summary continues to total CBM/GW/NW/Boxes.
+- CBM is now imported directly from Word Packing List CBM column.
+- Supports headers like CBM, C.B.M, Cubic, m3, m³.
+- Imported CBM is not overwritten by automatic L × B × H calculation.
+- If Word CBM is blank, app calculates CBM from dimensions.
 
 ## Login
 Password: 1985
