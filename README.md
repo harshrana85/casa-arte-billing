@@ -1,11 +1,11 @@
-# Casa Arte Privée Billing System — Word Import Packing List
+# Casa Arte Privée Billing System — Packing CBM Column Fixed
 
 ## Fix
-- Word import now detects Invoice files.
-- If uploaded Word has a Packing List table, it imports packing rows.
-- Imported packing rows include Box No, Part, Brand, Product Details, Length, Breadth, Height, CBM, GW, NW.
-- If Invoice has no PL table, packing rows auto-generate from products.
-- Imported Invoice opens in entry page with packing list loaded.
+- CBM column is visible in Packing List entry.
+- CBM can be manually entered/edited.
+- If CBM is zero, app auto-suggests L × B × H / 1,000,000.
+- Packing summary automatically totals the CBM column.
+- GW/NW and total boxes continue to calculate in summary.
 
 ## Login
 Password: 1985
