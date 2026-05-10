@@ -1,10 +1,11 @@
-# Casa Arte Privée Billing System — Word Import CBM Fixed
+# Casa Arte Privée Billing System — Word Import CBM Root Fixed
 
 ## Fix
-- CBM is now imported directly from Word Packing List CBM column.
-- Supports headers like CBM, C.B.M, Cubic, m3, m³.
-- Imported CBM is not overwritten by automatic L × B × H calculation.
-- If Word CBM is blank, app calculates CBM from dimensions.
+- Imported Word CBM is no longer overwritten by packing initializer.
+- App's own Word PL export is imported by exact column positions:
+  SL, Box No, Part, Brand, Product Details, Length, Breadth, Height, CBM, GW, NW.
+- Single-letter dimension matching fixed so Length does not accidentally read SL.
+- CBM imported from Word now stays visible in rows and summary.
 
 ## Login
 Password: 1985

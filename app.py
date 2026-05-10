@@ -170,7 +170,8 @@ def packing_from_products(products, existing=None):
                 row["Part"] = row.get("Part", "1/1")
                 row["Brand"] = p.get("Brand", "")
                 row["Product Details"] = p.get("Product Details", "")
-                row["CBM"] = round(l * b * h * box_qty / 1000000, 3)
+                existing_cbm = float(row.get("CBM", 0) or 0)
+                row["CBM"] = existing_cbm if existing_cbm else round(l * b * h * box_qty / 1000000, 3)
                 row["GW"] = float(row.get("GW", 0) or 0)
                 row["NW"] = float(row.get("NW", 0) or 0)
                 out.append(row)
@@ -322,9 +323,11 @@ def extract_docx_to_document(uploaded_file, existing_terms=""):
             name = str(name).lower().strip()
             if name in normalized:
                 return normalized[name]
-        # then contains
+        # contains only for names longer than 1 character, so "l" does not match "sl"
         for name in possible_names:
             name = str(name).lower().strip()
+            if len(name) <= 1:
+                continue
             for k, v in normalized.items():
                 if name in k:
                     return v
@@ -367,6 +370,25 @@ def extract_docx_to_document(uploaded_file, existing_terms=""):
                 if not any(str(x).strip() for x in row):
                     continue
                 row_map = {headers[i]: row[i] if i < len(row) else "" for i in range(len(headers))}
+
+                # Direct support for this app's own Word PL export:
+                # SL | Box No | Part | Brand | Product Details | Length | Breadth | Height | CBM | GW | NW
+                if len(headers) >= 11 and headers[:11] == ["sl", "box no", "part", "brand", "product details", "length", "breadth", "height", "cbm", "gw", "nw"]:
+                    direct_pack = {
+                        "Box No": int(clean_number(row[1]) or len(packing_rows) + 1),
+                        "Part": row[2] or "1/1",
+                        "Brand": row[3],
+                        "Product Details": row[4],
+                        "Length": clean_number(row[5]),
+                        "Breadth": clean_number(row[6]),
+                        "Height": clean_number(row[7]),
+                        "CBM": clean_number(row[8]),
+                        "GW": clean_number(row[9]),
+                        "NW": clean_number(row[10]),
+                    }
+                    if direct_pack["Brand"] or direct_pack["Product Details"]:
+                        packing_rows.append(direct_pack)
+                    continue
 
                 brand = get_cell(row_map, ["brand"])
                 product_details = get_cell(row_map, ["product details", "product", "description", "details"])
