@@ -1,11 +1,11 @@
-# Casa Arte Privée Billing System — Packing CBM Column Fixed
+# Casa Arte Privée Billing System — Word PL Roundtrip Fixed
 
 ## Fix
-- CBM column is visible in Packing List entry.
-- CBM can be manually entered/edited.
-- If CBM is zero, app auto-suggests L × B × H / 1,000,000.
-- Packing summary automatically totals the CBM column.
-- GW/NW and total boxes continue to calculate in summary.
+- Word download now exports Packing List with separate CBM, GW, and NW columns.
+- No packing row data should go missing in Word.
+- Uploading the Word file back now imports packing data correctly.
+- CBM values are imported and preserved.
+- Packing summary continues to total CBM/GW/NW/Boxes.
 
 ## Login
 Password: 1985
