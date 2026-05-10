@@ -1,11 +1,12 @@
-# Casa Arte Privée Billing System — Refinements + Word Import
+# Casa Arte Privée Billing System — Product Stable Inputs
 
-## Added/Fixes
-- VAT/GST number clearly prints in PDF and Word Bill To section.
-- Product entry has Delete Product Row No.
-- Deleting row renumbers subsequent serials automatically in PDF/Word.
-- Packing split box inserts immediately below the same product.
-- Word upload/import added: upload .docx, edit in entry page, save/convert/add packing list.
+## Fix
+- Product entry no longer uses Streamlit data_editor.
+- Brand, Product Details, Size, Finish, Qty, Rate stay constant while typing.
+- Add Product Row button added.
+- Delete Row No. deletes a full product row.
+- Serial numbers auto-renumber after deletion.
+- Existing VAT, Word import, packing split, PDF/Word functions remain.
 
 ## Login
 Password: 1985

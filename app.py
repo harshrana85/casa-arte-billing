@@ -812,51 +812,85 @@ if st.session_state.page == "Create / Edit":
 
     st.markdown("<div class='card'><h3 class='gold'>Products</h3>", unsafe_allow_html=True)
 
-    product_state_key = f"product_rows_{editing.get('id') if editing else 'new'}"
-    active_key = editing.get("id") if editing else "new"
-    if st.session_state.get("active_product_doc_key") != active_key:
-        init_products = editing.get("products") if editing else [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+    product_doc_key = editing.get("id") if editing else "new_document"
+    product_state_key = f"product_rows_{product_doc_key}"
+
+    # Load products only once per document so values do not reset while typing.
+    if st.session_state.get("active_product_doc_key") != product_doc_key:
+        init_products = editing.get("products") if editing else [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1.0,"Rate Per Piece":0.0}]
         st.session_state[product_state_key] = init_products
-        st.session_state["active_product_doc_key"] = active_key
+        st.session_state["active_product_doc_key"] = product_doc_key
 
     if product_state_key not in st.session_state:
-        st.session_state[product_state_key] = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+        st.session_state[product_state_key] = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1.0,"Rate Per Piece":0.0}]
 
-    dc1, dc2, dc3 = st.columns([1, 1, 4])
-    with dc1:
-        delete_row_no = st.number_input("Delete Product Row No.", min_value=1, value=1, step=1)
-    with dc2:
+    # Product action buttons
+    pc1, pc2, pc3, pc4 = st.columns([1.2, 1.2, 1.2, 4])
+    with pc1:
+        if st.button("Add Product Row"):
+            rows = list(st.session_state[product_state_key])
+            rows.append({"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1.0,"Rate Per Piece":0.0})
+            st.session_state[product_state_key] = rows
+            st.rerun()
+    with pc2:
+        delete_row_no = st.number_input("Delete Row No.", min_value=1, value=1, step=1)
+    with pc3:
         st.write("")
         st.write("")
-        if st.button("Delete Product Row"):
-            current_products = list(st.session_state[product_state_key])
-            idx_to_delete = int(delete_row_no) - 1
-            if 0 <= idx_to_delete < len(current_products):
-                current_products.pop(idx_to_delete)
-                if not current_products:
-                    current_products = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
-                st.session_state[product_state_key] = current_products
-                st.success(f"Deleted product row {delete_row_no}. Serial numbers will move up automatically.")
+        if st.button("Delete Row"):
+            rows = list(st.session_state[product_state_key])
+            idx = int(delete_row_no) - 1
+            if 0 <= idx < len(rows):
+                rows.pop(idx)
+                if not rows:
+                    rows = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1.0,"Rate Per Piece":0.0}]
+                st.session_state[product_state_key] = rows
+                st.success(f"Deleted product row {delete_row_no}. Serial numbers move up automatically.")
                 st.rerun()
             else:
                 st.warning("Row number not found.")
 
-    product_df = pd.DataFrame(st.session_state[product_state_key])
-    for col in PRODUCT_COLS:
-        if col not in product_df.columns:
-            product_df[col] = 0 if col in ["Qty","Rate Per Piece"] else ""
+    st.caption("Stable entry mode: product values will not reset while typing. Serial numbers are automatic in PDF/Word.")
 
-    edited_df = st.data_editor(product_df[PRODUCT_COLS], num_rows="dynamic", use_container_width=True, key=f"prod_{st.session_state.editing_id or 'new'}")
-    raw_products = edited_df.fillna("").to_dict("records")
-    products = []
-    for p in raw_products:
-        if not str(p.get("Brand","")).strip() and not str(p.get("Product Details","")).strip() and not str(p.get("Size","")).strip() and not str(p.get("Finish","")).strip() and float(p.get("Qty",0) or 0) == 0 and float(p.get("Rate Per Piece",0) or 0) == 0:
-            continue
-        products.append(p)
-    if not products:
-        products = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+    header_cols = st.columns([0.6, 1.5, 3.0, 1.5, 2.5, 0.9, 1.2, 1.2])
+    headers = ["SL", "Brand", "Product Details", "Size", "Finish", "Qty", "Rate/PC", "Amount"]
+    for col, h in zip(header_cols, headers):
+        col.markdown(f"**{h}**")
+
+    updated_products = []
+    current_rows = list(st.session_state[product_state_key])
+
+    for idx, row in enumerate(current_rows):
+        row_key = f"{product_doc_key}_{idx}"
+        cols = st.columns([0.6, 1.5, 3.0, 1.5, 2.5, 0.9, 1.2, 1.2])
+
+        cols[0].write(idx + 1)
+        brand = cols[1].text_input("Brand", value=str(row.get("Brand", "")), key=f"prod_brand_{row_key}", label_visibility="collapsed")
+        product_details = cols[2].text_input("Product Details", value=str(row.get("Product Details", "")), key=f"prod_details_{row_key}", label_visibility="collapsed")
+        size = cols[3].text_input("Size", value=str(row.get("Size", "")), key=f"prod_size_{row_key}", label_visibility="collapsed")
+        finish = cols[4].text_input("Finish", value=str(row.get("Finish", "")), key=f"prod_finish_{row_key}", label_visibility="collapsed")
+        qty = cols[5].number_input("Qty", min_value=0.0, value=float(row.get("Qty", 0) or 0), step=1.0, key=f"prod_qty_{row_key}", label_visibility="collapsed")
+        rate = cols[6].number_input("Rate", min_value=0.0, value=float(row.get("Rate Per Piece", 0) or 0), step=1.0, key=f"prod_rate_{row_key}", label_visibility="collapsed")
+        amount = float(qty or 0) * float(rate or 0)
+        cols[7].write(money(amount, currency))
+
+        # Keep rows with any useful data. This avoids accidental blank rows in PDF.
+        if str(brand).strip() or str(product_details).strip() or str(size).strip() or str(finish).strip() or float(qty or 0) != 0 or float(rate or 0) != 0:
+            updated_products.append({
+                "Brand": brand,
+                "Product Details": product_details,
+                "Size": size,
+                "Finish": finish,
+                "Qty": float(qty or 0),
+                "Rate Per Piece": float(rate or 0),
+            })
+
+    if not updated_products:
+        updated_products = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1.0,"Rate Per Piece":0.0}]
+
+    products = updated_products
     st.session_state[product_state_key] = products
-    st.caption("Serial numbers are automatic in PDF/Word. Delete any row and following rows move up.")
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><h3 class='gold'>Discount / Shipping / Totals</h3>", unsafe_allow_html=True)
