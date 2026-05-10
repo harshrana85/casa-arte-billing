@@ -278,6 +278,69 @@ def number_to_words(n):
         return number_to_words(n // 1000000) + " Million" + ((" " + number_to_words(n % 1000000)) if n % 1000000 else "")
     return number_to_words(n // 1000000000) + " Billion" + ((" " + number_to_words(n % 1000000000)) if n % 1000000000 else "")
 
+
+def extract_docx_to_document(uploaded_file, existing_terms=""):
+    doc = Document(uploaded_file)
+    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
+    full_text = "\n".join(paragraphs)
+
+    products = []
+    for table in doc.tables:
+        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+        if not rows:
+            continue
+        headers = [h.lower() for h in rows[0]]
+        if not (any("brand" in h for h in headers) or any("product" in h for h in headers) or any("description" in h for h in headers)):
+            continue
+        for row in rows[1:]:
+            if not any(row):
+                continue
+            row_map = {headers[i]: row[i] if i < len(row) else "" for i in range(len(headers))}
+            item = {"Brand": "", "Product Details": "", "Size": "", "Finish": "", "Qty": 1, "Rate Per Piece": 0.0}
+            for k, v in row_map.items():
+                if "brand" in k:
+                    item["Brand"] = v
+                elif "product" in k or "description" in k or "details" in k:
+                    item["Product Details"] = v
+                elif "size" in k:
+                    item["Size"] = v
+                elif "finish" in k or "material" in k:
+                    item["Finish"] = v
+                elif "qty" in k or "quantity" in k:
+                    try: item["Qty"] = float(str(v).replace(",", "") or 0)
+                    except Exception: item["Qty"] = 0
+                elif "rate" in k or "price" in k:
+                    try: item["Rate Per Piece"] = float(str(v).replace(",", "").replace("€","").replace("$","").replace("AED","") or 0)
+                    except Exception: item["Rate Per Piece"] = 0.0
+            if item["Brand"] or item["Product Details"] or item["Size"] or item["Finish"]:
+                products.append(item)
+
+    if not products:
+        products = [{"Brand": "", "Product Details": full_text[:1200], "Size": "", "Finish": "", "Qty": 1, "Rate Per Piece": 0.0}]
+
+    return {
+        "id": str(uuid.uuid4()),
+        "type": "Proforma Invoice",
+        "number": "",
+        "date": str(date.today()),
+        "currency": "EUR",
+        "bill_to": {"Company Name": "", "Registration Number": "", "GST/VAT": "", "Contact Person": "", "Phone": "", "Email": "", "Country": "", "Address": ""},
+        "ship_same": True,
+        "ship_to": {},
+        "products": products,
+        "discount_type": "Percentage",
+        "discount_value": 0.0,
+        "shipping_enabled": False,
+        "shipping_cost": 0.0,
+        "terms": existing_terms or "",
+        "packing": [],
+        "packing_summary": {"Total Boxes": 0, "Total CBM": 0.0, "Total GW": 0.0, "Total NW": 0.0},
+        "total": 0.0,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def amount_in_words(amount, currency):
     amount = round(float(amount or 0), 2)
     whole = int(amount)
@@ -411,9 +474,14 @@ def build_word(docdata):
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.style = "Table Grid"
     table.cell(0,0).text = "BILL TO\n" + "\n".join([
-        bill.get("Company Name",""), bill.get("Registration Number",""), bill.get("GST/VAT",""),
-        bill.get("Contact Person",""), bill.get("Phone",""), bill.get("Email",""),
-        bill.get("Address",""), bill.get("Country","")
+        bill.get("Company Name",""),
+        "Registration No: " + bill.get("Registration Number",""),
+        "VAT/GST No: " + bill.get("GST/VAT",""),
+        "Contact: " + bill.get("Contact Person",""),
+        "Phone: " + bill.get("Phone",""),
+        "Email: " + bill.get("Email",""),
+        bill.get("Address",""),
+        bill.get("Country","")
     ])
     table.cell(0,1).text = "SHIP TO\n" + ("Same as Bill To" if docdata.get("ship_same") else "\n".join([
         ship.get("Company Name",""), ship.get("Contact Person",""), ship.get("Phone",""),
@@ -533,7 +601,16 @@ def build_pdf(docdata):
 
     bill = docdata.get("bill_to",{})
     ship = docdata.get("ship_to",{})
-    bill_text = "<br/>".join([f"<b>{bill.get('Company Name','')}</b>", bill.get("Registration Number",""), bill.get("GST/VAT",""), bill.get("Contact Person",""), bill.get("Phone",""), bill.get("Email",""), bill.get("Address",""), bill.get("Country","")])
+    bill_text = "<br/>".join([
+        f"<b>{bill.get('Company Name','')}</b>",
+        f"Registration No: {bill.get('Registration Number','')}",
+        f"VAT/GST No: {bill.get('GST/VAT','')}",
+        f"Contact: {bill.get('Contact Person','')}",
+        f"Phone: {bill.get('Phone','')}",
+        f"Email: {bill.get('Email','')}",
+        bill.get("Address",""),
+        bill.get("Country","")
+    ])
     ship_text = "Same as Bill To" if docdata.get("ship_same") else "<br/>".join([ship.get("Company Name",""), ship.get("Contact Person",""), ship.get("Phone",""), ship.get("Email",""), ship.get("Address",""), ship.get("Country","")])
     bt = Table([[Paragraph("<b>BILL TO</b><br/>"+bill_text, styles["Small"]), Paragraph("<b>SHIP TO</b><br/>"+ship_text, styles["Small"])]], colWidths=[86*mm,86*mm])
     bt.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#c9b083")),("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#faf7f1")),("VALIGN",(0,0),(-1,-1),"TOP")]))
@@ -636,6 +713,7 @@ customers = load_json(CUSTOMERS_FILE, [])
 documents = load_json(DOCUMENTS_FILE, [])
 
 if "editing_id" not in st.session_state: st.session_state.editing_id = None
+if "imported_doc_buffer" not in st.session_state: st.session_state.imported_doc_buffer = None
 
 
 
@@ -668,10 +746,27 @@ st.caption(f"Current page: {st.session_state.page}")
 
 if st.session_state.page == "Create / Edit":
     editing = next((d for d in documents if d.get("id") == st.session_state.editing_id), None) if st.session_state.editing_id else None
+    if editing is None and st.session_state.get("imported_doc_buffer") and st.session_state.editing_id == st.session_state.imported_doc_buffer.get("id"):
+        editing = st.session_state.imported_doc_buffer
     if editing:
-        st.success(f"Editing existing document: {editing.get('number','')}. Saving will update the SAME document.")
+        st.success(f"Editing existing document: {editing.get('number') or 'Imported Word Draft'}. Saving will update the SAME document.")
     else:
         st.info("Creating a new document.")
+
+    st.markdown("<div class='card'><h3 class='gold'>Optional: Import Existing Word File</h3>", unsafe_allow_html=True)
+    uploaded_word = st.file_uploader("Upload existing Word file (.docx) to convert into editable draft", type=["docx"], key="word_import_upload")
+    if uploaded_word is not None:
+        if st.button("Import Word into Entry Page"):
+            imported = extract_docx_to_document(uploaded_word, settings.get("terms",""))
+            imported["number"] = next_number(imported["type"], documents)
+            st.session_state.imported_doc_buffer = imported
+            st.session_state.editing_id = imported["id"]
+            st.session_state.force_page = "Create / Edit"
+            st.success("Word file imported. Review/edit all fields before saving.")
+            st.rerun()
+    st.caption("Import extracts available text/tables. Please review all fields before saving or converting.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
     c1,c2,c3,c4 = st.columns(4)
     doc_type = c1.selectbox("Document Type", ["Proforma Invoice","Invoice"], index=1 if editing and editing.get("type")=="Invoice" else 0)
@@ -693,7 +788,7 @@ if st.session_state.page == "Create / Edit":
     with a:
         bill_company = st.text_input("Company Name", value=bill_existing.get("Company Name",""))
         bill_reg = st.text_input("Company Registration Number", value=bill_existing.get("Registration Number",""))
-        bill_vat = st.text_input("GST / VAT", value=bill_existing.get("GST/VAT",""))
+        bill_vat = st.text_input("VAT / GST Number", value=bill_existing.get("GST/VAT",""))
         bill_contact = st.text_input("Contact Person", value=bill_existing.get("Contact Person",""))
     with b:
         bill_phone = st.text_input("Phone", value=bill_existing.get("Phone",""))
@@ -716,12 +811,52 @@ if st.session_state.page == "Create / Edit":
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><h3 class='gold'>Products</h3>", unsafe_allow_html=True)
-    init_products = editing.get("products") if editing else [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
-    pdf = pd.DataFrame(init_products)
+
+    product_state_key = f"product_rows_{editing.get('id') if editing else 'new'}"
+    active_key = editing.get("id") if editing else "new"
+    if st.session_state.get("active_product_doc_key") != active_key:
+        init_products = editing.get("products") if editing else [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+        st.session_state[product_state_key] = init_products
+        st.session_state["active_product_doc_key"] = active_key
+
+    if product_state_key not in st.session_state:
+        st.session_state[product_state_key] = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+
+    dc1, dc2, dc3 = st.columns([1, 1, 4])
+    with dc1:
+        delete_row_no = st.number_input("Delete Product Row No.", min_value=1, value=1, step=1)
+    with dc2:
+        st.write("")
+        st.write("")
+        if st.button("Delete Product Row"):
+            current_products = list(st.session_state[product_state_key])
+            idx_to_delete = int(delete_row_no) - 1
+            if 0 <= idx_to_delete < len(current_products):
+                current_products.pop(idx_to_delete)
+                if not current_products:
+                    current_products = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+                st.session_state[product_state_key] = current_products
+                st.success(f"Deleted product row {delete_row_no}. Serial numbers will move up automatically.")
+                st.rerun()
+            else:
+                st.warning("Row number not found.")
+
+    product_df = pd.DataFrame(st.session_state[product_state_key])
     for col in PRODUCT_COLS:
-        if col not in pdf.columns: pdf[col] = 0 if col in ["Qty","Rate Per Piece"] else ""
-    edited_df = st.data_editor(pdf[PRODUCT_COLS], num_rows="dynamic", use_container_width=True, key=f"prod_{st.session_state.editing_id or 'new'}")
-    products = edited_df.fillna("").to_dict("records")
+        if col not in product_df.columns:
+            product_df[col] = 0 if col in ["Qty","Rate Per Piece"] else ""
+
+    edited_df = st.data_editor(product_df[PRODUCT_COLS], num_rows="dynamic", use_container_width=True, key=f"prod_{st.session_state.editing_id or 'new'}")
+    raw_products = edited_df.fillna("").to_dict("records")
+    products = []
+    for p in raw_products:
+        if not str(p.get("Brand","")).strip() and not str(p.get("Product Details","")).strip() and not str(p.get("Size","")).strip() and not str(p.get("Finish","")).strip() and float(p.get("Qty",0) or 0) == 0 and float(p.get("Rate Per Piece",0) or 0) == 0:
+            continue
+        products.append(p)
+    if not products:
+        products = [{"Brand":"","Product Details":"","Size":"","Finish":"","Qty":1,"Rate Per Piece":0.0}]
+    st.session_state[product_state_key] = products
+    st.caption("Serial numbers are automatic in PDF/Word. Delete any row and following rows move up.")
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><h3 class='gold'>Discount / Shipping / Totals</h3>", unsafe_allow_html=True)
@@ -811,8 +946,9 @@ if st.session_state.page == "Create / Edit":
                 if product_labels:
                     original_index = int(split_choice.split(".")[0]) - 1
                     p = products[original_index]
-                    st.session_state[packing_state_key].append({
-                        "Box No": len(clean_packing_rows(st.session_state[packing_state_key])) + 1,
+                    rows_now = clean_packing_rows(st.session_state[packing_state_key])
+                    new_pack_row = {
+                        "Box No": len(rows_now) + 1,
                         "Part": part_label or "Part",
                         "Brand": p.get("Brand", ""),
                         "Product Details": p.get("Product Details", ""),
@@ -822,8 +958,13 @@ if st.session_state.page == "Create / Edit":
                         "CBM": 0.0,
                         "GW": 0.0,
                         "NW": 0.0,
-                    })
-                    st.session_state[packing_state_key] = clean_packing_rows(st.session_state[packing_state_key])
+                    }
+                    insert_at = len(rows_now)
+                    for r_i, r in enumerate(rows_now):
+                        if r.get("Brand","") == p.get("Brand","") and r.get("Product Details","") == p.get("Product Details",""):
+                            insert_at = r_i + 1
+                    rows_now.insert(insert_at, new_pack_row)
+                    st.session_state[packing_state_key] = clean_packing_rows(rows_now)
                     st.rerun()
 
         st.markdown("#### Packing Rows")
@@ -951,6 +1092,7 @@ if st.session_state.page == "Create / Edit":
 
         # After save/update, return to Saved Documents list.
         st.session_state.editing_id = None
+        st.session_state.imported_doc_buffer = None
         st.session_state.force_page = "Saved Documents"
         st.success(f"Saved / Updated: {docdata['number']}")
         st.rerun()
