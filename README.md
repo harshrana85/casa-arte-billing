@@ -1,12 +1,11 @@
-# Casa Arte Privée Billing System — Product Stable Inputs
+# Casa Arte Privée Billing System — Word Import Packing List
 
 ## Fix
-- Product entry no longer uses Streamlit data_editor.
-- Brand, Product Details, Size, Finish, Qty, Rate stay constant while typing.
-- Add Product Row button added.
-- Delete Row No. deletes a full product row.
-- Serial numbers auto-renumber after deletion.
-- Existing VAT, Word import, packing split, PDF/Word functions remain.
+- Word import now detects Invoice files.
+- If uploaded Word has a Packing List table, it imports packing rows.
+- Imported packing rows include Box No, Part, Brand, Product Details, Length, Breadth, Height, CBM, GW, NW.
+- If Invoice has no PL table, packing rows auto-generate from products.
+- Imported Invoice opens in entry page with packing list loaded.
 
 ## Login
 Password: 1985

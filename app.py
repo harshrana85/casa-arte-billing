@@ -280,50 +280,162 @@ def number_to_words(n):
 
 
 def extract_docx_to_document(uploaded_file, existing_terms=""):
+    """Import Word file into editable app document.
+    If the Word file appears to be an Invoice and has a Packing List table,
+    products + packing rows are imported.
+    """
     doc = Document(uploaded_file)
     paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
     full_text = "\n".join(paragraphs)
+    lower_text = full_text.lower()
+
+    imported_type = "Invoice" if "packing list" in lower_text or "invoice" in lower_text else "Proforma Invoice"
+    currency = "EUR"
+    if "usd" in lower_text or "$" in full_text:
+        currency = "USD"
+    elif "aed" in lower_text:
+        currency = "AED"
+    elif "eur" in lower_text or "€" in full_text:
+        currency = "EUR"
 
     products = []
+    packing_rows = []
+
+    def clean_number(value):
+        value = str(value or "").replace(",", "").replace("€", "").replace("$", "").replace("AED", "").strip()
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
+
     for table in doc.tables:
         rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
         if not rows:
             continue
-        headers = [h.lower() for h in rows[0]]
-        if not (any("brand" in h for h in headers) or any("product" in h for h in headers) or any("description" in h for h in headers)):
-            continue
-        for row in rows[1:]:
-            if not any(row):
-                continue
-            row_map = {headers[i]: row[i] if i < len(row) else "" for i in range(len(headers))}
-            item = {"Brand": "", "Product Details": "", "Size": "", "Finish": "", "Qty": 1, "Rate Per Piece": 0.0}
-            for k, v in row_map.items():
-                if "brand" in k:
-                    item["Brand"] = v
-                elif "product" in k or "description" in k or "details" in k:
-                    item["Product Details"] = v
-                elif "size" in k:
-                    item["Size"] = v
-                elif "finish" in k or "material" in k:
-                    item["Finish"] = v
-                elif "qty" in k or "quantity" in k:
-                    try: item["Qty"] = float(str(v).replace(",", "") or 0)
-                    except Exception: item["Qty"] = 0
-                elif "rate" in k or "price" in k:
-                    try: item["Rate Per Piece"] = float(str(v).replace(",", "").replace("€","").replace("$","").replace("AED","") or 0)
-                    except Exception: item["Rate Per Piece"] = 0.0
-            if item["Brand"] or item["Product Details"] or item["Size"] or item["Finish"]:
-                products.append(item)
+
+        headers = [h.lower().replace("\n", " ").strip() for h in rows[0]]
+        header_text = " ".join(headers)
+
+        is_packing_table = (
+            "packing" in header_text
+            or "box" in header_text
+            or "cbm" in header_text
+            or ("length" in header_text and "breadth" in header_text and "height" in header_text)
+            or ("gw" in header_text and "nw" in header_text)
+        )
+
+        is_product_table = (
+            any("brand" in h for h in headers)
+            or any("product" in h for h in headers)
+            or any("description" in h for h in headers)
+            or any("details" in h for h in headers)
+        ) and not is_packing_table
+
+        if is_packing_table:
+            for row in rows[1:]:
+                if not any(str(x).strip() for x in row):
+                    continue
+                row_map = {headers[i]: row[i] if i < len(row) else "" for i in range(len(headers))}
+
+                pack = {
+                    "Box No": len(packing_rows) + 1,
+                    "Part": "1/1",
+                    "Brand": "",
+                    "Product Details": "",
+                    "Length": 0.0,
+                    "Breadth": 0.0,
+                    "Height": 0.0,
+                    "CBM": 0.0,
+                    "GW": 0.0,
+                    "NW": 0.0,
+                }
+
+                for k, v in row_map.items():
+                    if "box" in k:
+                        try:
+                            pack["Box No"] = int(clean_number(v)) or len(packing_rows) + 1
+                        except Exception:
+                            pack["Box No"] = len(packing_rows) + 1
+                    elif "part" in k:
+                        pack["Part"] = v or "1/1"
+                    elif "brand" in k:
+                        pack["Brand"] = v
+                    elif "product" in k or "description" in k or "details" in k:
+                        pack["Product Details"] = v
+                    elif "length" in k or k.strip() == "l":
+                        pack["Length"] = clean_number(v)
+                    elif "breadth" in k or "width" in k or k.strip() == "b":
+                        pack["Breadth"] = clean_number(v)
+                    elif "height" in k or k.strip() == "h":
+                        pack["Height"] = clean_number(v)
+                    elif "cbm" in k:
+                        pack["CBM"] = clean_number(v)
+                    elif k.strip() == "gw" or "gross" in k:
+                        pack["GW"] = clean_number(v)
+                    elif k.strip() == "nw" or "net" in k:
+                        pack["NW"] = clean_number(v)
+
+                if pack["CBM"] == 0 and (pack["Length"] or pack["Breadth"] or pack["Height"]):
+                    pack["CBM"] = round(pack["Length"] * pack["Breadth"] * pack["Height"] / 1000000, 3)
+
+                if pack["Brand"] or pack["Product Details"]:
+                    packing_rows.append(pack)
+
+        elif is_product_table:
+            for row in rows[1:]:
+                if not any(str(x).strip() for x in row):
+                    continue
+                row_map = {headers[i]: row[i] if i < len(row) else "" for i in range(len(headers))}
+                item = {"Brand": "", "Product Details": "", "Size": "", "Finish": "", "Qty": 1, "Rate Per Piece": 0.0}
+
+                for k, v in row_map.items():
+                    if "brand" in k:
+                        item["Brand"] = v
+                    elif "product" in k or "description" in k or "details" in k:
+                        item["Product Details"] = v
+                    elif "size" in k:
+                        item["Size"] = v
+                    elif "finish" in k or "material" in k:
+                        item["Finish"] = v
+                    elif "qty" in k or "quantity" in k:
+                        item["Qty"] = clean_number(v)
+                    elif "rate" in k or "price" in k:
+                        item["Rate Per Piece"] = clean_number(v)
+
+                if item["Brand"] or item["Product Details"] or item["Size"] or item["Finish"]:
+                    products.append(item)
+
+    # If packing rows were found but product table was not clear, create products from packing rows.
+    if not products and packing_rows:
+        seen = set()
+        for p in packing_rows:
+            key = (p.get("Brand", ""), p.get("Product Details", ""))
+            if key not in seen:
+                products.append({
+                    "Brand": p.get("Brand", ""),
+                    "Product Details": p.get("Product Details", ""),
+                    "Size": "",
+                    "Finish": "",
+                    "Qty": 1,
+                    "Rate Per Piece": 0.0,
+                })
+                seen.add(key)
 
     if not products:
         products = [{"Brand": "", "Product Details": full_text[:1200], "Size": "", "Finish": "", "Qty": 1, "Rate Per Piece": 0.0}]
 
+    # If file is invoice but no packing table found, auto-generate packing rows from products.
+    if imported_type == "Invoice" and not packing_rows:
+        packing_rows = packing_from_products(products, [])
+
+    summary = packing_summary(packing_rows) if packing_rows else {"Total Boxes": 0, "Total CBM": 0.0, "Total GW": 0.0, "Total NW": 0.0}
+
     return {
         "id": str(uuid.uuid4()),
-        "type": "Proforma Invoice",
+        "type": imported_type,
         "number": "",
         "date": str(date.today()),
-        "currency": "EUR",
+        "currency": currency,
         "bill_to": {"Company Name": "", "Registration Number": "", "GST/VAT": "", "Contact Person": "", "Phone": "", "Email": "", "Country": "", "Address": ""},
         "ship_same": True,
         "ship_to": {},
@@ -333,8 +445,8 @@ def extract_docx_to_document(uploaded_file, existing_terms=""):
         "shipping_enabled": False,
         "shipping_cost": 0.0,
         "terms": existing_terms or "",
-        "packing": [],
-        "packing_summary": {"Total Boxes": 0, "Total CBM": 0.0, "Total GW": 0.0, "Total NW": 0.0},
+        "packing": packing_rows,
+        "packing_summary": summary,
         "total": 0.0,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -764,7 +876,7 @@ if st.session_state.page == "Create / Edit":
             st.session_state.force_page = "Create / Edit"
             st.success("Word file imported. Review/edit all fields before saving.")
             st.rerun()
-    st.caption("Import extracts available text/tables. Please review all fields before saving or converting.")
+    st.caption("Import extracts product tables and, if the Word file is an Invoice, also imports Packing List tables. Please review all fields before saving.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
